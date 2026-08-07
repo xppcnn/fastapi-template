@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
+    database_url: str = (
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi_template"
+    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
