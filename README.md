@@ -101,6 +101,40 @@ def downgrade() -> None:
 - **不要手改已应用的迁移文件**：历史不可变，只允许追加新迁移
 - **手动导入 SQL 的环境**：`alembic upgrade head --sql` 导出的文件含版本记录，导入后 alembic 状态保持一致
 
+## 健康检查
+
+| 接口 | 用途 | 是否访问数据库 |
+|---|---|---|
+| `GET /api/v1/health` | 向后兼容的基础存活检查 | 否 |
+| `GET /api/v1/health/live` | 容器 liveness probe，判断进程是否存活 | 否 |
+| `GET /api/v1/health/ready` | readiness probe，执行 `SELECT 1` 判断数据库是否可用 | 是 |
+
+数据库不可用时，readiness 返回 HTTP 503。负载均衡器或编排系统应停止向该实例发送新请求，但不应仅因为 readiness 失败立即重启进程；进程重启由 liveness 决定。
+
+## 数据库事务规范
+
+请求处理使用 `app.core.database.DbSession` 注入 Session：
+
+```python
+from app.core.database import DbSession
+
+
+async def create_item(session: DbSession) -> dict:
+    session.add(item)
+    await session.flush()
+    return {"id": item.id}
+```
+
+统一规则：
+
+- 一个请求共享一个 Session 和一个事务边界。
+- 请求成功时依赖统一执行 `commit()`；发生异常或请求取消时执行 `rollback()`。
+- `DbSession` 使用 function scope，提交或回滚发生在 HTTP 响应发送前。
+- Repository 可以执行查询、`add()` 和 `flush()`，不得调用 `commit()` 或 `rollback()`。
+- Service 负责组织同一事务内的业务操作，但不持有全局 Session。
+- 不得把请求 Session 传给后台任务；Worker 或后台任务必须创建自己的 Session 和事务。
+- 需要独立事务时显式创建新 Session，不要在同一个请求 Session 中嵌套提交。
+
 ## 测试
 
 ```bash
