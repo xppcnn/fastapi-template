@@ -64,7 +64,8 @@ Expected: `pyproject.toml` 和 `uv.lock` 更新成功。
 def test_app_error_contains_request_id(client):
     response = client.get("/api/v1/test-error")
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "PROJECT_CONFLICT"
+    assert response.json()["code"] == 409
+    assert response.json()["data"] is None
     assert response.json()["request_id"] == response.headers["x-request-id"]
 ```
 
@@ -97,14 +98,18 @@ llm_model: str = "configure-me"
 embedding_model: str = "configure-me"
 ```
 
-`request_id_middleware` 接受客户端合法 UUID 或生成新 UUID，并写入 `request.state.request_id` 和响应头。错误响应固定为：
+`request_id_middleware` 接受客户端合法 UUID 或生成新 UUID，并写入 `request.state.request_id` 和响应头。成功响应为 `{"data": ..., "code": 200, "message": "ok"}`；错误响应固定为：
 
 ```json
 {
-  "error": {"code": "STABLE_CODE", "message": "用户可读信息"},
+  "data": null,
+  "code": 409,
+  "message": "用户可读信息",
   "request_id": "uuid"
 }
 ```
+
+`code` 为数值，且与 HTTP 状态码一致（200 表示业务正常，非 200 表示错误）；`AppError`、422 校验错误、HTTPException 与未捕获异常均输出该统一格式。
 
 **Step 5: 运行目标测试与静态检查**
 

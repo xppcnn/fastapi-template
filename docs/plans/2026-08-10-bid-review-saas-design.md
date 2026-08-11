@@ -439,7 +439,7 @@ API 使用 `/api/v1` 前缀。耗时操作创建后台任务并返回 `job_id`�
 - `POST complete` 在事务内冻结结论并切换到 `scoring`；评分任务成功后自动切换到 `completed`，此后才允许生成报告；
 - `POST job retry` 只接受标记为可重试的失败任务；重试评分任务会把 `scoring_failed` 恢复为 `scoring`，但不会解除结论冻结；
 - 创建审核和报告接口支持幂等键；
-- 错误响应包含稳定错误码、用户可读信息和 `request_id`；
+- 响应统一为 `{"data", "code", "message"}` 结构，`code` 为数值且与 HTTP 状态码一致（200 表示业务正常）；错误响应额外携带 `request_id` 与响应头 `X-Request-ID` 对应；
 - 下载接口只返回短期地址，不暴露真实对象路径。
 
 ### 8.3 前端页面
