@@ -1,12 +1,22 @@
+import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, Uuid, false, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    public_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        default=uuid.uuid4,
+        unique=True,
+        nullable=False,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -18,5 +28,5 @@ class Base(DeclarativeBase):
         nullable=False,
     )
     is_deleted: Mapped[bool] = mapped_column(
-        Boolean, server_default=func.false(), nullable=False
+        Boolean, server_default=false(), nullable=False
     )

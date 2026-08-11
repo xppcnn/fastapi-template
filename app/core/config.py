@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
     log_format: Literal["auto", "text", "json"] = "auto"
+    jwt_secret_key: str = "development-only-change-me-at-least-32-bytes"
+    jwt_algorithm: Literal["HS256"] = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
+    refresh_cookie_name: str = "refresh_token"
     database_url: str = (
         "postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi_template"
     )

@@ -51,3 +51,11 @@ def test_logging_environment_overrides(monkeypatch) -> None:
         assert settings.json_logs is True
     finally:
         get_settings.cache_clear()
+
+
+def test_default_development_jwt_secret_is_at_least_32_bytes(monkeypatch) -> None:
+    monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert len(settings.jwt_secret_key.encode()) >= 32
