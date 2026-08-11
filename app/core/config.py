@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,11 +9,19 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
+    log_level: str = "INFO"
+    log_format: Literal["auto", "text", "json"] = "auto"
     database_url: str = (
         "postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi_template"
     )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    @property
+    def json_logs(self) -> bool:
+        if self.log_format != "auto":
+            return self.log_format == "json"
+        return self.environment.lower() not in {"development", "local", "test"}
 
 
 @lru_cache

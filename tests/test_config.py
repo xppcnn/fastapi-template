@@ -1,6 +1,6 @@
 import os
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
 
 def test_database_url_override(monkeypatch) -> None:
@@ -20,5 +20,34 @@ def test_database_url_default() -> None:
     get_settings.cache_clear()
     try:
         assert get_settings().database_url.startswith("postgresql+asyncpg://")
+    finally:
+        get_settings.cache_clear()
+
+
+def test_logging_defaults_to_info_and_text_in_development(monkeypatch) -> None:
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("LOG_FORMAT", raising=False)
+    settings = Settings(_env_file=None)
+
+    assert settings.log_level == "INFO"
+    assert settings.log_format == "auto"
+    assert settings.json_logs is False
+
+
+def test_auto_logging_format_uses_json_in_production(monkeypatch) -> None:
+    monkeypatch.delenv("LOG_FORMAT", raising=False)
+    settings = Settings(environment="production", _env_file=None)
+
+    assert settings.json_logs is True
+
+
+def test_logging_environment_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("LOG_FORMAT", "json")
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert settings.log_level == "DEBUG"
+        assert settings.json_logs is True
     finally:
         get_settings.cache_clear()
