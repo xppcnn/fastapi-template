@@ -61,11 +61,13 @@ def test_register_creates_default_organization(client: TestClient) -> None:
 
     assert response.status_code == 201
     body = response.json()
-    assert body["user"]["email"] == "owner@example.com"
-    assert body["organization"]["role"] == "owner"
-    assert body["organization"]["status"] == "active"
-    assert body["access_token"]
-    assert body["token_type"] == "bearer"
+    assert body["code"] == 200
+    assert body["message"] == "ok"
+    assert body["data"]["user"]["email"] == "owner@example.com"
+    assert body["data"]["organization"]["role"] == "owner"
+    assert body["data"]["organization"]["status"] == "active"
+    assert body["data"]["access_token"]
+    assert body["data"]["token_type"] == "bearer"
     set_cookie = response.headers["set-cookie"].lower()
     assert "refresh_token=" in set_cookie
     assert "httponly" in set_cookie
@@ -100,10 +102,12 @@ def test_login_returns_access_token_and_refresh_cookie(client: TestClient) -> No
 
     assert response.status_code == 200
     body = response.json()
-    assert body["access_token"]
-    assert body["token_type"] == "bearer"
-    assert body["user"]["email"] == credentials["email"]
-    assert body["organization"]["role"] == "owner"
+    assert body["code"] == 200
+    assert body["message"] == "ok"
+    assert body["data"]["access_token"]
+    assert body["data"]["token_type"] == "bearer"
+    assert body["data"]["user"]["email"] == credentials["email"]
+    assert body["data"]["organization"]["role"] == "owner"
     set_cookie = response.headers["set-cookie"].lower()
     assert "refresh_token=" in set_cookie
     assert "httponly" in set_cookie
@@ -143,7 +147,7 @@ def test_refresh_rotates_cookie_and_returns_access_token(
     response = client.post("/api/v1/auth/refresh")
 
     assert response.status_code == 200
-    assert response.json()["access_token"]
+    assert response.json()["data"]["access_token"]
     assert client.cookies["refresh_token"] != old_refresh_token
 
 
@@ -156,7 +160,7 @@ def test_me_returns_current_user_and_organization(client: TestClient) -> None:
             "organization_name": "Acme Review",
         },
     )
-    access_token = registration.json()["access_token"]
+    access_token = registration.json()["data"]["access_token"]
 
     response = client.get(
         "/api/v1/auth/me",
@@ -164,9 +168,11 @@ def test_me_returns_current_user_and_organization(client: TestClient) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["user"]["email"] == "owner@example.com"
-    assert response.json()["organization"]["name"] == "Acme Review"
-    assert response.json()["organization"]["role"] == "owner"
+    assert response.json()["code"] == 200
+    assert response.json()["message"] == "ok"
+    assert response.json()["data"]["user"]["email"] == "owner@example.com"
+    assert response.json()["data"]["organization"]["name"] == "Acme Review"
+    assert response.json()["data"]["organization"]["role"] == "owner"
 
 
 def test_me_rejects_expired_access_token(client: TestClient) -> None:
@@ -176,7 +182,7 @@ def test_me_rejects_expired_access_token(client: TestClient) -> None:
             "email": "owner@example.com",
             "password": "correct horse battery staple",
         },
-    ).json()
+    ).json()["data"]
     settings = get_settings()
     now = datetime.now(UTC)
     expired_token = jwt.encode(

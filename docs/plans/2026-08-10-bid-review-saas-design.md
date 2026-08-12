@@ -439,7 +439,9 @@ API 使用 `/api/v1` 前缀。耗时操作创建后台任务并返回 `job_id`�
 - `POST complete` 在事务内冻结结论并切换到 `scoring`；评分任务成功后自动切换到 `completed`，此后才允许生成报告；
 - `POST job retry` 只接受标记为可重试的失败任务；重试评分任务会把 `scoring_failed` 恢复为 `scoring`，但不会解除结论冻结；
 - 创建审核和报告接口支持幂等键；
-- 响应统一为 `{"data", "code", "message"}` 结构，`code` 为数值且与 HTTP 状态码一致（200 表示业务正常）；错误响应额外携带 `request_id` 与响应头 `X-Request-ID` 对应；
+- 普通 JSON 成功响应统一为 `{"data": ..., "code": 200, "message": "ok"}`，其中业务 `code` 固定为 `200`，不随 HTTP 成功状态码变化；例如创建接口可以返回 HTTP `201`，但响应体 `code` 仍为 `200`；
+- 普通 JSON 错误响应的 `code` 与 HTTP 错误状态码一致，并额外携带 `request_id`，其值与响应头 `X-Request-ID` 对应；
+- 删除成功返回 HTTP `200` 和统一成功响应体，不使用无法携带响应体的 HTTP `204`；SSE 接口使用 `text/event-stream`，不套用普通 JSON 响应结构；
 - 下载接口只返回短期地址，不暴露真实对象路径。
 
 ### 8.3 前端页面

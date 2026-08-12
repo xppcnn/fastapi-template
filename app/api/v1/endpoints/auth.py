@@ -4,6 +4,7 @@ from app.api.dependencies import CurrentPrincipalDep
 from app.core.config import get_settings
 from app.core.database import DbSession
 from app.core.exceptions import AppError
+from app.core.response import ApiResponse, ok
 from app.schemas.auth import (
     AuthResponse,
     LoginRequest,
@@ -49,57 +50,59 @@ def _auth_response(result: AuthResult) -> AuthResponse:
 
 @router.post(
     "/register",
-    response_model=AuthResponse,
+    response_model=ApiResponse[AuthResponse],
     status_code=status.HTTP_201_CREATED,
 )
 async def register(
     payload: RegisterRequest,
     response: Response,
     session: DbSession,
-) -> AuthResponse:
+) -> dict:
     result = await register_user(session, payload=payload)
     _set_refresh_cookie(response, result.refresh_token)
-    return _auth_response(result)
+    return ok(_auth_response(result))
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post("/login", response_model=ApiResponse[AuthResponse])
 async def login(
     payload: LoginRequest,
     response: Response,
     session: DbSession,
-) -> AuthResponse:
+) -> dict:
     result = await login_user(session, payload=payload)
     _set_refresh_cookie(response, result.refresh_token)
-    return _auth_response(result)
+    return ok(_auth_response(result))
 
 
-@router.post("/refresh", response_model=AuthResponse)
+@router.post("/refresh", response_model=ApiResponse[AuthResponse])
 async def refresh(
     request: Request,
     response: Response,
     session: DbSession,
-) -> AuthResponse:
+) -> dict:
     settings = get_settings()
     refresh_token = request.cookies.get(settings.refresh_cookie_name)
     if refresh_token is None:
         raise AppError("Invalid or expired refresh token", code=401)
     result = await refresh_session(session, refresh_token=refresh_token)
     _set_refresh_cookie(response, result.refresh_token)
-    return _auth_response(result)
+    return ok(_auth_response(result))
 
 
-@router.get("/me", response_model=MeResponse)
-async def me(principal: CurrentPrincipalDep) -> MeResponse:
-    return MeResponse(
-        user=UserResponse(
-            public_id=principal.user_public_id,
-            email=principal.email,
-            is_active=True,
-        ),
-        organization=OrganizationResponse(
-            public_id=principal.organization_public_id,
-            name=principal.organization_name,
-            status=principal.organization_status.value,
-            role=principal.role.value,
-        ),
+@router.get("/me", response_model=ApiResponse[MeResponse])
+async def me(principal: CurrentPrincipalDep) -> dict:
+    return ok(
+        MeResponse(
+            user=UserResponse(
+                public_id=principal.user_public_id,
+                email=principal.email,
+                is_active=True,
+            ),
+            organization=OrganizationResponse(
+                public_id=principal.organization_public_id,
+                name=principal.organization_name,
+                status=principal.organization_status.value,
+                role=principal.role.value,
+            ),
+        )
     )

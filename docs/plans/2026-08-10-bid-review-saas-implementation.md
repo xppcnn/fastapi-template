@@ -20,6 +20,10 @@
 - 所有业务查询都必须显式接收 `organization_id`。
 - 迁移文件手写并执行 upgrade/downgrade 测试，不修改已提交迁移。
 - 每个任务结束运行目标测试；每个里程碑结束运行全量测试和静态检查。
+- 所有普通 JSON 成功接口使用 `ApiResponse[T]` 作为 `response_model` 并通过 `ok(...)` 返回 `{"data": ..., "code": 200, "message": "ok"}`；业务 `code` 固定为 `200`，即使创建接口的 HTTP 状态码为 `201`。
+- 普通 JSON 错误响应的 `code` 与 HTTP 错误状态码一致并包含 `request_id`；删除成功返回 HTTP `200` 和统一成功响应体，不使用 HTTP `204`。
+- SSE 接口使用 `text/event-stream`，不套用 `ApiResponse`；其事件负载使用对应的稳定事件 Schema。
+- 每个 API Task 的集成测试必须断言成功响应包含 `data`、`code == 200` 和 `message == "ok"`，并验证 OpenAPI 成功响应引用对应的 `ApiResponse[T]`。
 
 ## 里程碑
 
@@ -109,7 +113,7 @@ embedding_model: str = "configure-me"
 }
 ```
 
-`code` 为数值，且与 HTTP 状态码一致（200 表示业务正常，非 200 表示错误）；`AppError`、422 校验错误、HTTPException 与未捕获异常均输出该统一格式。
+成功响应的 `code` 固定为 `200`，不随 HTTP `200` 或 `201` 等成功状态变化；错误响应的 `code` 与 HTTP 错误状态码一致。`AppError`、422 校验错误、HTTPException 与未捕获异常均输出该统一错误格式。
 
 **Step 5: 运行目标测试与静态检查**
 
@@ -217,7 +221,9 @@ def test_register_creates_default_organization(client):
         "email": "owner@example.com", "password": "correct horse battery staple"
     })
     assert response.status_code == 201
-    assert response.json()["organization"]["role"] == "owner"
+    assert response.json()["code"] == 200
+    assert response.json()["message"] == "ok"
+    assert response.json()["data"]["organization"]["role"] == "owner"
 ```
 
 **Step 2: 运行测试确认失败**
@@ -290,6 +296,7 @@ git commit -m "feat: add organization-scoped authentication"
 **Step 1: 写项目 CRUD 和越权失败测试**
 
 必须证明组织 A 无法通过列表、详情、修改和删除访问组织 B 的项目，响应统一为 404，避免泄露资源存在性。
+创建、列表、详情、修改和删除成功响应必须断言统一 `ApiResponse` 结构；创建可以返回 HTTP `201`，但响应体 `code` 固定为 `200`，删除成功返回 HTTP `200`。
 
 **Step 2: 运行测试确认失败**
 
@@ -348,6 +355,7 @@ git commit -m "feat: add tenant-isolated review projects"
 **Step 1: 写文档版本失败测试**
 
 覆盖：创建 `tender/bid` 逻辑文档、申请上传、完成上传、SHA-256 去重、列出版本、解析前激活失败、解析后激活成功和跨租户拒绝。
+所有普通 JSON 成功响应必须断言 `data`、`code == 200` 和 `message == "ok"`，并验证对应的 `ApiResponse[T]` OpenAPI 模型。
 
 **Step 2: 定义存储端口契约**
 
@@ -427,6 +435,7 @@ queued -> running -> succeeded
 - `GET /jobs/{id}` 返回持久化状态；
 - `GET /jobs/{id}/events` 每次状态变化发送 SSE，心跳不写数据库；
 - `POST /jobs/{id}/retry` 只重试可重试失败任务。
+- 任务查询与重试使用统一 `ApiResponse[T]`；SSE 保持 `text/event-stream`，不套用 `ApiResponse`。
 
 **Step 5: 验证**
 
@@ -552,6 +561,7 @@ Fake Adapter 必须能模拟成功、超时、限流、无效 JSON 和重试后�
 **Step 5: 实现规则确认 API**
 
 支持列表、修改 draft、忽略、确认和批量确认。只有当前招标版本的 confirmed 规则可以创建审核运行。
+所有普通 JSON 成功响应使用 `ApiResponse[T]` 和 `ok(...)`，API 测试断言 `code == 200`、`message == "ok"` 和业务数据位于 `data`。
 
 **Step 6: 验证**
 
@@ -585,6 +595,7 @@ git commit -m "feat: extract traceable tender review rules"
 **Step 1: 写运行快照失败测试**
 
 验证创建运行时固定：活动招标版本、活动投标版本、confirmed 规则完整副本和提示词/执行器版本。创建后修改当前规则或更换文档版本不得影响旧运行。
+审核运行 API 的创建、列表与详情成功响应必须断言统一 `ApiResponse` 结构；创建可以返回 HTTP `201`，但响应体 `code` 固定为 `200`。
 
 **Step 2: 创建 pgvector 迁移**
 
@@ -698,6 +709,7 @@ git commit -m "feat: evaluate bid compliance with evidence"
 **Step 1: 写追加修订失败测试**
 
 验证 PATCH 不覆盖 AI 修订，而是创建新修订并更新 `current_revision_id`；运行不在 `human_review` 时返回 409。
+结论修改与查询的成功响应必须断言 `data`、`code == 200` 和 `message == "ok"`，并验证 OpenAPI 使用对应的 `ApiResponse[T]`。
 
 **Step 2: 写冻结与评分竞态测试**
 
@@ -747,6 +759,7 @@ git commit -m "feat: review findings and calculate simulated scores"
 **Step 1: 写报告前置条件和快照测试**
 
 未 completed 的运行不能生成报告。报告创建时必须写入所有当前 `finding_revision_id` 和 `score_result_id`；后续重新导出创建新版本。
+报告创建、列表与下载成功响应必须断言统一 `ApiResponse` 结构；下载接口把短期预签名 URL 放在 `data` 中。
 
 **Step 2: 实现报告模型**
 
@@ -795,6 +808,7 @@ git commit -m "feat: generate immutable review reports"
 **Step 1: 写安全失败测试**
 
 覆盖伪装扩展名、超大文件、路径穿越文件名、提示注入文本、跨组织下载、过期 URL、软删除后访问和清理任务幂等。
+涉及既有普通 JSON API 的安全失败与成功路径必须继续验证统一响应结构；错误响应断言 `code` 与 HTTP 错误状态码一致且包含 `request_id`。
 
 **Step 2: 实现文件检查链**
 
@@ -888,6 +902,7 @@ git commit -m "test: add reproducible bid review evaluations"
 **Step 1: 写端到端失败测试**
 
 使用 Fake LLM、Fake OCR 和测试对象存储走通：注册、项目、两份文档、解析、规则确认、审核运行、人工复核、评分和报告。
+端到端测试同时抽查认证、项目、文档、任务查询、规则、审核运行和报告接口的统一成功响应；断言业务数据位于 `data`、`code == 200`、`message == "ok"`。SSE 只验证 `text/event-stream` 与事件 Schema。
 
 **Step 2: 扩展 Docker Compose**
 
