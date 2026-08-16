@@ -120,16 +120,20 @@ from app.core.database import DbSession
 
 
 async def create_item(session: DbSession) -> dict:
-    session.add(item)
-    await session.flush()
-    return {"id": item.id}
+    try:
+        async with session.begin():
+            item = Item(...)
+            await create_item_repo(session, item=item)
+            return {"id": item.id}
+    except IntegrityError as exc:
+        raise AppError("Item already exists", code=409) from exc
 ```
 
 统一规则：
 
-- 一个请求共享一个 Session 和一个事务边界。
-- 请求成功时依赖统一执行 `commit()`；发生异常或请求取消时执行 `rollback()`。
-- `DbSession` 使用 function scope，提交或回滚发生在 HTTP 响应发送前。
+- 一个请求共享一个 Session；请求依赖 `get_db` 只负责打开和关闭 Session，不再自动提交。
+- Service 的写路径用 `async with session.begin():` 包裹整个工作单元（含业务读取），正常退出自动 `commit()`，异常自动 `rollback()`；只读服务无需 begin。
+- `session.begin()` 必须是该 Session 的首次语句——Session 首次执行语句会自动开启事务（autobegin），之后再 `begin()` 会抛 `InvalidRequestError`。因此不要在依赖中先读库再在 Service 中 begin；写接口的身份校验应在 begin 块内完成（或依赖先显式结束只读事务）。
 - Repository 可以执行查询、`add()` 和 `flush()`，不得调用 `commit()` 或 `rollback()`。
 - Service 负责组织同一事务内的业务操作，但不持有全局 Session。
 - 不得把请求 Session 传给后台任务；Worker 或后台任务必须创建自己的 Session 和事务。

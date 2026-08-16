@@ -25,6 +25,17 @@ async def get_user_by_email(session: AsyncSession, *, email: str) -> User | None
     return result.scalar_one_or_none()
 
 
+async def create_user_identity(
+    session: AsyncSession,
+    *,
+    user: User,
+    organization: Organization,
+    membership: Membership,
+) -> None:
+    session.add_all([user, organization, membership])
+    await session.flush()
+
+
 async def get_identity_by_email(
     session: AsyncSession, *, email: str
 ) -> IdentityContext | None:
