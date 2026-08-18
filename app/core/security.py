@@ -33,9 +33,7 @@ def verify_password(password: str, password_hash: str) -> bool:
     return _password_hash.verify(password, password_hash)
 
 
-def create_access_token(
-    *, user_public_id: UUID, organization_public_id: UUID
-) -> str:
+def create_access_token(*, user_public_id: UUID, organization_public_id: UUID) -> str:
     settings = get_settings()
     now = datetime.now(UTC)
     return jwt.encode(

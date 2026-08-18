@@ -1,9 +1,13 @@
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, Enum, ForeignKey, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.project import Project
 
 
 class OrganizationStatus(StrEnum):
@@ -26,6 +30,9 @@ class User(Base):
     )
 
     memberships: Mapped[list["Membership"]] = relationship(back_populates="user")
+    projects_created: Mapped[list["Project"]] = relationship(
+        back_populates="created_by"
+    )
 
 
 class Organization(Base):
@@ -47,6 +54,7 @@ class Organization(Base):
     memberships: Mapped[list["Membership"]] = relationship(
         back_populates="organization"
     )
+    projects: Mapped[list["Project"]] = relationship(back_populates="organization")
 
 
 class Membership(Base):

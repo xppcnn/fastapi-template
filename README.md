@@ -44,6 +44,7 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi_templ
 # 1. 生成迁移模板（不连接数据库）
 uv run alembic revision -m "add users table"
 
+uv run alembic revision --autogenerate -m "add age to users" 
 # 2. 手写 upgrade()/downgrade() 中的 DDL 操作
 #    参考 alembic/versions/ 中已有文件的写法
 
