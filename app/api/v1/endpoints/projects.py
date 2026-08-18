@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Query, status
 from uuid import UUID
+
 import structlog
+from fastapi import APIRouter, Query, status
+
 from app.api.dependencies import CurrentPrincipalDep
 from app.core.database import DbSession
 from app.core.response import ApiResponse, ok
@@ -13,9 +15,9 @@ from app.schemas.project import (
 )
 from app.services.projects import (
     create_project,
+    delete_project,
     get_project,
     list_projects,
-    delete_project,
     update_project,
 )
 
