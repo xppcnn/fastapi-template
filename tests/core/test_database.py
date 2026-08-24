@@ -37,7 +37,7 @@ class ObservedSessionContext:
         self.exit_exception_type = exc_type
 
 
-def test_get_db_closes_session_without_commit_after_success(monkeypatch) -> None:
+def test_get_db_commits_and_closes_session_after_success(monkeypatch) -> None:
     session = ObservedSession()
     context = ObservedSessionContext(session)
     monkeypatch.setattr(database, "async_session_factory", lambda: context)
@@ -50,7 +50,7 @@ def test_get_db_closes_session_without_commit_after_success(monkeypatch) -> None
 
     asyncio.run(run_dependency())
 
-    assert session.commit_calls == 0
+    assert session.commit_calls == 1
     assert session.rollback_calls == 0
     assert context.exited is True
     assert context.exit_exception_type is None

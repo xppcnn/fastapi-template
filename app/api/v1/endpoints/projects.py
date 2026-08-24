@@ -6,13 +6,19 @@ from fastapi import APIRouter, Query, status
 from app.api.dependencies import CurrentPrincipalDep
 from app.core.database import DbSession
 from app.core.response import ApiResponse, ok
+from app.models.document import Document
 from app.models.project import Project
+from app.schemas.document import (
+    CreateDocumentRequest,
+    CreateDocumentResponse,
+)
 from app.schemas.project import (
     ProjectCreateRequest,
     ProjectListResponse,
     ProjectResponse,
     ProjectUpdateRequest,
 )
+from app.services.documents import create_document
 from app.services.projects import (
     create_project,
     delete_project,
@@ -119,3 +125,38 @@ async def update(
         payload=payload,
     )
     return ok(project)
+
+
+def _document_response(
+    document: Document, project_public_id: UUID
+) -> CreateDocumentResponse:
+    return CreateDocumentResponse(
+        public_id=document.public_id,
+        project_id=project_public_id,
+        name=document.name,
+        doc_type=document.doc_type,
+        active_version=document.active_version_id,
+        created_at=document.created_at,
+        updated_at=document.updated_at,
+    )
+
+
+@router.post(
+    "/{project_id}/documents",
+    response_model=ApiResponse[CreateDocumentResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_documents(
+    project_id: UUID,
+    payload: CreateDocumentRequest,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+) -> dict:
+    document = await create_document(
+        session,
+        payload=payload,
+        organization_id=principal.organization_id,
+        created_by_id=principal.user_id,
+        project_public_id=project_id,
+    )
+    return ok(_document_response(document, project_id))

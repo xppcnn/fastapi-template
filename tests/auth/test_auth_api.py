@@ -35,6 +35,7 @@ def client() -> Generator[TestClient, None, None]:
         async with session_factory() as session:
             try:
                 yield session
+                await session.commit()
             except BaseException:
                 await session.rollback()
                 raise

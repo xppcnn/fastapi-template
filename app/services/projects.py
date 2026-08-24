@@ -26,14 +26,13 @@ async def create_project(
     organization_id: int,
     created_by_id: int,
 ) -> Project:
-    async with session.begin():
-        return await insert_project(
-            session,
-            organization_id=organization_id,
-            created_by_id=created_by_id,
-            name=payload.name,
-            description=payload.description,
-        )
+    return await insert_project(
+        session,
+        organization_id=organization_id,
+        created_by_id=created_by_id,
+        name=payload.name,
+        description=payload.description,
+    )
 
 
 async def get_project(
@@ -66,30 +65,28 @@ async def list_projects(
 async def delete_project(
     session: AsyncSession, *, organization_id: int, public_id: UUID
 ) -> None:
-    async with session.begin():
-        project = await session.execute(
-            select(Project).where(
-                Project.organization_id == organization_id,
-                Project.public_id == public_id,
-            )
+    project = await session.execute(
+        select(Project).where(
+            Project.organization_id == organization_id,
+            Project.public_id == public_id,
         )
-        project = project.scalar_one_or_none()
+    )
+    project = project.scalar_one_or_none()
 
-        if project is None:
-            raise AppError("Project not found", code=404)
-        if project.is_deleted:
-            raise AppError("Project already deleted", code=400)
-        project.is_deleted = True
-        await session.flush()
+    if project is None:
+        raise AppError("Project not found", code=404)
+    if project.is_deleted:
+        raise AppError("Project already deleted", code=400)
+    project.is_deleted = True
+    await session.flush()
 
 async def update_project(
     session: AsyncSession, *, organization_id: int, public_id: UUID, payload: ProjectUpdateRequest
 ) -> Project:
-    async with session.begin():
-        project = await get_project(
-            session=session, organization_id=organization_id, public_id=public_id
-        )
-        return await project_repository.update_project(
-            session, project=project, payload=payload
-        )
+    project = await get_project(
+        session=session, organization_id=organization_id, public_id=public_id
+    )
+    return await project_repository.update_project(
+        session, project=project, payload=payload
+    )
     

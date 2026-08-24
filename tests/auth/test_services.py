@@ -48,6 +48,7 @@ def test_register_user_commits_and_persists(
                     password="correct horse battery staple",
                 ),
             )
+            await session.commit()
         async with session_factory() as verify_session:
             user = await get_user_by_email(
                 verify_session, email="owner@example.com"
@@ -70,6 +71,7 @@ def test_register_user_rolls_back_on_duplicate_email(
                     password="correct horse battery staple",
                 ),
             )
+            await session.commit()
             with pytest.raises(AppError) as exc_info:
                 await register_user(
                     session,

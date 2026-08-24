@@ -59,44 +59,43 @@ async def register_user(
     session: AsyncSession, *, payload: RegisterRequest
 ) -> AuthResult:
     try:
-        async with session.begin():
-            email = normalize_email(str(payload.email))
-            if await get_user_by_email(session, email=email) is not None:
-                raise AppError("Email already registered", code=409)
+        email = normalize_email(str(payload.email))
+        if await get_user_by_email(session, email=email) is not None:
+            raise AppError("Email already registered", code=409)
 
-            user = User(
-                email=email,
-                password_hash=hash_password(payload.password),
-                is_active=True,
-            )
-            organization = Organization(
-                name=payload.organization_name or f"{email} Organization"
-            )
-            membership = Membership(
-                user=user,
-                organization=organization,
-                role=MembershipRole.OWNER,
-            )
-            await create_user_identity(
-                session,
-                user=user,
-                organization=organization,
-                membership=membership,
-            )
+        user = User(
+            email=email,
+            password_hash=hash_password(payload.password),
+            is_active=True,
+        )
+        organization = Organization(
+            name=payload.organization_name or f"{email} Organization"
+        )
+        membership = Membership(
+            user=user,
+            organization=organization,
+            role=MembershipRole.OWNER,
+        )
+        await create_user_identity(
+            session,
+            user=user,
+            organization=organization,
+            membership=membership,
+        )
 
-            return AuthResult(
-                user=user,
-                organization=organization,
-                membership=membership,
-                access_token=create_access_token(
-                    user_public_id=user.public_id,
-                    organization_public_id=organization.public_id,
-                ),
-                refresh_token=create_refresh_token(
-                    user_public_id=user.public_id,
-                    token_id=uuid4(),
-                ),
-            )
+        return AuthResult(
+            user=user,
+            organization=organization,
+            membership=membership,
+            access_token=create_access_token(
+                user_public_id=user.public_id,
+                organization_public_id=organization.public_id,
+            ),
+            refresh_token=create_refresh_token(
+                user_public_id=user.public_id,
+                token_id=uuid4(),
+            ),
+        )
     except IntegrityError as exc:
         raise AppError("Email already registered", code=409) from exc
 
