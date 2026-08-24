@@ -12,7 +12,7 @@
 ## 快速开始
 
 ```bash
-# 1. 启动本地 PostgreSQL
+# 1. 启动本地 PostgreSQL 与 SILO 对象存储
 docker compose up -d
 
 # 2. 安装依赖
@@ -27,6 +27,16 @@ uv run fastapi dev --port 8000
 ```bash
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi_template
 ```
+
+### SILO 对象存储（本地）
+
+`docker compose up -d` 会同时启动 [SILO](https://silo.pgsty.com/)（S3 兼容对象存储，MinIO 社区维护分支）：
+
+- S3 API：`http://127.0.0.1:9000`
+- 管理控制台：`http://127.0.0.1:9001`，凭据 `silo-admin` / `silo-admin`
+- 镜像固定在 `pgsty/silo:RELEASE.2026-08-06T00-00-00Z`，升级时改 `docker-compose.yml` 中的 tag 即可（勿跨版本滚动迁移数据）
+
+仅限本地开发。投入生产前请改用强凭据、启用 TLS，并阅读 [SILO 部署文档](https://silo.pgsty.com/zh/operations/deployments/)。
 
 ## Alembic 使用说明
 
