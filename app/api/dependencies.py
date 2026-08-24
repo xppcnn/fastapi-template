@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends
+from fastapi import Depends, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.database import DbSession
@@ -63,3 +63,19 @@ async def get_current_principal(
 
 
 CurrentPrincipalDep = Annotated[CurrentPrincipal, Depends(get_current_principal)]
+
+
+@dataclass(frozen=True)
+class PaginateParams:
+    page: int
+    page_size: int
+
+
+def get_paginate_params(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> PaginateParams:
+    return PaginateParams(page=page, page_size=page_size)
+
+
+PaginateParamsDep = Annotated[PaginateParams, Depends(get_paginate_params)]

@@ -1,3 +1,4 @@
+from typing import Annotated
 from uuid import UUID
 
 import structlog
@@ -11,6 +12,9 @@ from app.models.project import Project
 from app.schemas.document import (
     CreateDocumentRequest,
     CreateDocumentResponse,
+    DocumentItemResponse,
+    DocumentListQuery,
+    DocumentListResponse,
 )
 from app.schemas.project import (
     ProjectCreateRequest,
@@ -18,7 +22,12 @@ from app.schemas.project import (
     ProjectResponse,
     ProjectUpdateRequest,
 )
-from app.services.documents import create_document
+from app.services.documents import (
+    create_document,
+    document_detail,
+    document_lists,
+    delete_document as delete_document_service,
+)
 from app.services.projects import (
     create_project,
     delete_project,
@@ -160,3 +169,54 @@ async def create_documents(
         project_public_id=project_id,
     )
     return ok(_document_response(document, project_id))
+
+
+@router.get("/{project_id}/documents", response_model=ApiResponse[DocumentListResponse])
+async def document_list(
+    project_id: UUID,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+    query: Annotated[DocumentListQuery, Query()],
+):
+    result = await document_lists(
+        session=session,
+        project_public_id=project_id,
+        organization_id=principal.organization_id,
+        query=query,
+    )
+    return ok(result)
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}",
+    response_model=ApiResponse[DocumentItemResponse],
+)
+async def get_document_detail(
+    project_id: UUID,
+    document_id: UUID,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+):
+    result = await document_detail(
+        session=session,
+        project_public_id=project_id,
+        organization_id=principal.organization_id,
+        document_public_id=document_id,
+    )
+    return ok(result)
+
+
+@router.delete("/{project_id}/documents/{document_id}")
+async def delete_document(
+    project_id: UUID,
+    document_id: UUID,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+):
+    await delete_document_service(
+        session=session,
+        organization_id=principal.organization_id,
+        project_public_id=project_id,
+        document_public_id=document_id,
+    )
+    return ok()
