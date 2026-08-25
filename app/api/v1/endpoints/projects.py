@@ -45,6 +45,9 @@ from app.services.documents import (
 from app.services.documents import (
     initiate_upload as initiate_upload_service,
 )
+from app.services.documents import (
+    parse_document as parse_document_service,
+)
 from app.services.projects import (
     create_project,
     delete_project,
@@ -301,7 +304,11 @@ async def document_version_list(
     return ok(result)
 
 
-@router.post("/{project_id}/documents/{document_id}/versions/{version_id}/parse")
+@router.post(
+    "/{project_id}/documents/{document_id}/versions/{version_id}/parse",
+    response_model=ApiResponse[DocumentVersionResponse],
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def parse_project_document(
     project_id: UUID,
     document_id: UUID,
@@ -309,7 +316,14 @@ async def parse_project_document(
     principal: CurrentPrincipalDep,
     session: DbSession,
 ):
-    pass
+    version = await parse_document_service(
+        session,
+        project_public_id=project_id,
+        document_public_id=document_id,
+        version_public_id=version_id,
+        organization_id=principal.organization_id,
+    )
+    return ok(DocumentVersionResponse.model_validate(version))
 
 
 @router.get(

@@ -41,7 +41,7 @@
 <body>
 <div class="wrap">
   <h1>📄 文档上传功能测试</h1>
-  <div class="sub">流程：登录 → 选项目/文档 → 发起上传(预签名) → 浏览器直传 SILO → 完成上传(建版本)。接口见 docs/plans/2026-08-18-documents-api.md §6.5/§6.6</div>
+  <div class="sub">流程：登录 → 选项目/文档 → 发起上传(预签名) → 浏览器直传 SILO → 完成上传(建版本) → 解析(202 受理，自动轮询) → 产物下载链接。</div>
 
   <div class="card">
     <h2>① 登录</h2>
@@ -93,6 +93,17 @@
         <tr><th>创建时间</th><td id="r-created" colspan="3"></td></tr>
       </table>
     </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btn-parse" onclick="runParse()" disabled>解析文档</button>
+      <span class="file-meta" id="parseHint">完成上传后可发起解析(202 受理，自动轮询 parse_status)</span>
+    </div>
+    <div id="parseResult" class="hidden" style="margin-top:8px">
+      <div class="row">
+        <label>Markdown</label><a id="p-md" href="#" target="_blank" rel="noopener">打开产物</a>
+        <label>JSON</label><a id="p-json" href="#" target="_blank" rel="noopener">打开产物</a>
+      </div>
+      <div class="row"><label>解析错误</label><span id="p-error" style="color:var(--err)"></span></div>
+    </div>
   </div>
 
   <div class="card">
@@ -104,6 +115,7 @@
 <script>
 const API = "/api/v1";
 const state = { uploadId: null, objectKey: null, etag: null, sha256: null, idemKey: null };
+const parseState = { versionId: null, polling: false };
 
 function $(id) { return document.getElementById(id); }
 function token() { return $("token").value.trim(); }
@@ -238,18 +250,76 @@ async function runComplete() {
     $("r-pid").textContent = v.public_id;
     $("r-created").textContent = v.created_at;
     $("result").classList.remove("hidden");
+    parseState.versionId = v.public_id;
+    $("btn-parse").disabled = false;
     log(`完成上传：版本 ${v.version_number}，活动版本=${data.is_active}`, "l-ok");
     log(`Idempotency-Key: ${state.idemKey}（重复 complete 且同 key 会返回同一版本）`, "lk");
   } catch (e) { log("完成上传失败: " + e.message, "l-err"); }
   finally { $("btn-complete").disabled = false; }
 }
 
+async function runParse() {
+  const { pid, did } = targetIds();
+  const vid = parseState.versionId;
+  if (!token()) return log("请先登录", "l-err");
+  if (!vid) return log("请先完成上传(建版本)", "l-err");
+  if (parseState.polling) return log("正在轮询解析状态中，请稍候", "l-warn");
+  try {
+    $("btn-parse").disabled = true;
+    $("parseResult").classList.add("hidden");
+    log("① 发起解析…");
+    const v = await api(`/projects/${pid}/documents/${did}/versions/${vid}/parse`, { method: "POST" });
+    log(`解析已受理(202)：parse_status=${v.parse_status}，开始轮询…`, "l-ok");
+    $("r-status").textContent = v.parse_status;
+    parseState.polling = true;
+    await pollParseStatus(pid, did, vid);
+  } catch (e) {
+    log("解析发起失败: " + e.message, "l-err");
+    $("btn-parse").disabled = false;
+  }
+}
+
+async function pollParseStatus(pid, did, vid, maxTries = 120) {
+  for (let i = 1; i <= maxTries; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const list = await api(`/projects/${pid}/documents/${did}/versions?page=1&page_size=100`);
+      const v = list.items.find(x => x.public_id === vid);
+      if (!v) { log("版本列表中未找到该版本，轮询中止", "l-err"); break; }
+      $("r-status").textContent = v.parse_status;
+      if (i === 1 || v.parse_status !== "parsing") log(`轮询 #${i}：parse_status=${v.parse_status}`, "lk");
+      if (v.parse_status === "parsed") { await loadParsedResult(pid, did, vid); break; }
+      if (v.parse_status === "failed") {
+        log(`解析失败：${v.parse_error || "无错误信息"}`, "l-err");
+        break;
+      }
+    } catch (e) { log(`轮询 #${i} 出错: ${e.message}`, "l-err"); break; }
+  }
+  parseState.polling = false;
+  $("btn-parse").disabled = false;
+  if (!parseState.polling) log("轮询结束（可再次点击「解析文档」重解析）", "lk");
+}
+
+async function loadParsedResult(pid, did, vid) {
+  try {
+    const data = await api(`/projects/${pid}/documents/${did}/versions/${vid}/parsed`);
+    $("p-md").href = data.markdown_url;
+    $("p-json").href = data.json_url;
+    $("p-error").textContent = data.parse_error || "";
+    $("parseResult").classList.remove("hidden");
+    log("解析完成，Markdown/JSON 产物链接已就绪", "l-ok");
+  } catch (e) { log("获取解析产物失败: " + e.message, "l-err"); }
+}
+
 function reset() {
-  ["result", "fileMeta"].forEach(id => $(id).classList.add("hidden"));
+  ["result", "fileMeta", "parseResult"].forEach(id => $(id).classList.add("hidden"));
   $("fileMeta").textContent = "";
   $("log").innerHTML = "";
   state.uploadId = state.objectKey = state.etag = state.sha256 = state.idemKey = null;
+  parseState.versionId = null;
+  parseState.polling = false;
   $("btn-complete").disabled = true;
+  $("btn-parse").disabled = true;
 }
 
 (function () {

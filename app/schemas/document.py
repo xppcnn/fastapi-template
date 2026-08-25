@@ -93,6 +93,7 @@ class DocumentVersionResponse(BaseModel):
     content_type: str
     size_bytes: int
     parse_status: ParseStatus
+    parse_error: str | None = None
     created_at: datetime
 
 
@@ -115,6 +116,7 @@ class DocumentVersionListItem(BaseModel):
     content_type: str
     size_bytes: int
     parse_status: ParseStatus
+    parse_error: str | None = None
     is_active: bool = False
     created_at: datetime
 
