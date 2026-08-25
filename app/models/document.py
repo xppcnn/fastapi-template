@@ -139,6 +139,14 @@ class DocumentVersion(Base):
 class UploadSession(Base):
     __tablename__ = "upload_sessions"
 
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "idempotency_key",
+            name="uq_upload_sessions_document_idempotency_key",
+        ),
+    )
+
     document_id: Mapped[int] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -150,6 +158,8 @@ class UploadSession(Base):
     content_type: Mapped[str] = mapped_column(String(255), comment="MIME 类型")
 
     size_bytes: Mapped[int] = mapped_column(BigInteger)
+
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     status: Mapped[UploadSessionStatus] = mapped_column(
         Enum(

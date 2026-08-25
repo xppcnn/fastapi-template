@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文档上传测试页</title>
+<style>
+  :root { --bg:#0f1420; --panel:#171e2e; --border:#2a3550; --text:#dbe4f3; --muted:#8b98b3; --accent:#4f8cff; --ok:#3fb950; --err:#f85149; --warn:#d29922; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",monospace; }
+  .wrap { max-width:860px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin-bottom:20px; font-size:12px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:13px; margin:0 0 12px; color:var(--muted); font-weight:600; letter-spacing:.5px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  label { font-size:12px; color:var(--muted); min-width:70px; }
+  input[type=text], input[type=password], input[type=email], input[type=file], select {
+    background:#0d1322; color:var(--text); border:1px solid var(--border); border-radius:6px;
+    padding:7px 10px; font-size:13px; flex:1; min-width:160px;
+  }
+  button { background:#22315a; color:var(--text); border:1px solid var(--border); border-radius:6px;
+    padding:7px 14px; font-size:13px; cursor:pointer; }
+  button:hover { background:#2b3d6e; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.primary:hover { filter:brightness(1.1); }
+  .file-meta { font-size:12px; color:var(--muted); }
+  #log { background:#0a0f1a; border:1px solid var(--border); border-radius:8px; padding:12px;
+    font-size:12px; overflow:auto; max-height:300px; min-height:90px; white-space:pre-wrap; word-break:break-all; }
+  #log div { margin:2px 0; }
+  .l-ok { color:var(--ok); } .l-err { color:var(--err); } .l-warn { color:var(--warn); } .lk { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); word-break:break-all; }
+  th { color:var(--muted); font-weight:600; }
+  .hidden { display:none; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; background:#1c2b4a; }
+  .badge.on { background:#10391c; color:var(--ok); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📄 文档上传功能测试</h1>
+  <div class="sub">流程：登录 → 选项目/文档 → 发起上传(预签名) → 浏览器直传 SILO → 完成上传(建版本)。接口见 docs/plans/2026-08-18-documents-api.md §6.5/§6.6</div>
+
+  <div class="card">
+    <h2>① 登录</h2>
+    <div class="row">
+      <label>邮箱</label><input type="email" id="email" placeholder="user@example.com">
+      <label>密码</label><input type="password" id="password" placeholder="至少12位">
+      <button class="primary" id="btn-login" onclick="doLogin()">登录</button>
+    </div>
+    <div class="row"><label>Token</label><input type="text" id="token" placeholder="可手动粘贴 access token" style="font-size:11px"></div>
+  </div>
+
+  <div class="card">
+    <h2>② 选择目标</h2>
+    <div class="row">
+      <label>项目</label>
+      <select id="projects" onchange="loadDocuments()"><option value="">— 点击加载 —</option></select>
+      <button onclick="loadProjects()">加载项目</button>
+    </div>
+    <div class="row">
+      <label>文档</label>
+      <select id="documents"><option value="">— 先选项目 —</option></select>
+      <button onclick="loadDocuments()">加载文档</button>
+    </div>
+    <div class="row">
+      <label>手输 ID</label>
+      <input type="text" id="manualPid" placeholder="project public_id（留空用下拉选择）" style="flex:1">
+      <input type="text" id="manualDid" placeholder="document public_id" style="flex:1">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>③ 上传</h2>
+    <div class="row">
+      <label>文件</label>
+      <input type="file" id="file">
+      <span class="file-meta" id="fileMeta"></span>
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-upload" onclick="runUpload()">发起上传并直传</button>
+      <button id="btn-complete" onclick="runComplete()" disabled>完成上传(建版本)</button>
+      <button onclick="reset()">重置</button>
+    </div>
+    <div id="result" class="hidden">
+      <table>
+        <tr><th>版本号</th><td id="r-version"></td><th>活动版本</th><td id="r-active"></td></tr>
+        <tr><th>文件</th><td id="r-file" colspan="3"></td></tr>
+        <tr><th>大小</th><td id="r-size"></td><th>解析状态</th><td id="r-status"></td></tr>
+        <tr><th>public_id</th><td id="r-pid" colspan="3"></td></tr>
+        <tr><th>创建时间</th><td id="r-created" colspan="3"></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>④ 过程日志</h2>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+const API = "/api/v1";
+const state = { uploadId: null, objectKey: null, etag: null, sha256: null, idemKey: null };
+
+function $(id) { return document.getElementById(id); }
+function token() { return $("token").value.trim(); }
+function log(msg, cls) {
+  const el = document.createElement("div");
+  el.className = cls || "";
+  const t = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  el.innerHTML = `<span class="lk">[${t}]</span> ${msg}`;
+  $("log").appendChild(el);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+const pick = sel => { const s = $(sel); return s.selectedOptions[0] ? s.selectedOptions[0].value : ""; };
+const manual = id => $(id).value.trim();
+function targetIds() {
+  return { pid: manual("manualPid") || pick("projects"), did: manual("manualDid") || pick("documents") };
+}
+
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  if (token()) headers["Authorization"] = `Bearer ${token()}`;
+  const res = await fetch(API + path, { ...opts, headers });
+  let body = {};
+  try { body = await res.json(); } catch {}
+  if (!res.ok) {
+    const msg = body.message || `HTTP ${res.status}`;
+    throw new Error(msg + (body.request_id ? ` (request_id: ${body.request_id})` : ""));
+  }
+  return body.data;
+}
+
+async function doLogin() {
+  try {
+    const email = $("email").value.trim(), password = $("password").value;
+    if (!email || !password) throw new Error("请填写邮箱和密码");
+    const data = await api("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    $("token").value = data.access_token;
+    localStorage.setItem("test_token", data.access_token);
+    log(`登录成功：${data.user.email} / 组织 ${data.organization.name}`, "l-ok");
+    await loadProjects();
+  } catch (e) { log("登录失败: " + e.message, "l-err"); }
+}
+
+async function loadProjects() {
+  const sel = $("projects");
+  sel.innerHTML = '<option value="">加载中…</option>';
+  try {
+    const data = await api("/projects?page=1&page_size=100");
+    sel.innerHTML = '<option value="">— 选择项目 —</option>';
+    for (const p of data.items) {
+      const o = document.createElement("option");
+      o.value = p.public_id; o.textContent = `${p.name} (${p.public_id.slice(0, 8)})`;
+      sel.appendChild(o);
+    }
+    log(`加载到 ${data.total} 个项目`);
+    await loadDocuments();
+  } catch (e) { sel.innerHTML = '<option value="">加载失败</option>'; log("加载项目失败: " + e.message, "l-err"); }
+}
+
+async function loadDocuments() {
+  const pid = manual("manualPid") || pick("projects");
+  const sel = $("documents");
+  sel.innerHTML = '<option value="">加载中…</option>';
+  if (!pid) { sel.innerHTML = '<option value="">— 先选项目 —</option>'; return; }
+  try {
+    const data = await api(`/projects/${pid}/documents?page=1&page_size=100`);
+    sel.innerHTML = '<option value="">— 选择文档 —</option>';
+    for (const d of data.items) {
+      const o = document.createElement("option");
+      o.value = d.public_id; o.textContent = `${d.name} [${d.doc_type}] (${d.public_id.slice(0, 8)})`;
+      sel.appendChild(o);
+    }
+    log(`文档 ${data.total} 个`);
+  } catch (e) { sel.innerHTML = '<option value="">加载失败</option>'; log("加载文档失败: " + e.message, "l-err"); }
+}
+
+async function runUpload() {
+  const file = $("file").files[0];
+  const { pid, did } = targetIds();
+  if (!token()) return log("请先登录", "l-err");
+  if (!file) return log("请选择文件", "l-err");
+  if (!pid || !did) return log("请选择项目和文档（或手输 ID）", "l-err");
+
+  const fmt = n => n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+  $("fileMeta").textContent = `${file.name} · ${fmt(file.size)} · ${file.type || "未知类型"}`;
+
+  try {
+    $("btn-upload").disabled = true;
+    log("① 发起上传…");
+    const init = await api(`/projects/${pid}/documents/${did}/versions/uploads`, {
+      method: "POST",
+      body: JSON.stringify({ file_name: file.name, content_type: file.type || "application/octet-stream", size_bytes: file.size }),
+    });
+    state.uploadId = init.upload_id;
+    state.objectKey = init.object_key;
+    log(`上传会话：upload_id=${init.upload_id.slice(0, 8)}…`, "l-ok");
+    log(`object_key：${init.object_key}`);
+    log(`过期时间：${init.expires_at}`);
+
+    log("② 浏览器直传 SILO…");
+    const put = await fetch(init.upload_url, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+    if (!put.ok) throw new Error(`直传失败 HTTP ${put.status}`);
+    state.etag = put.headers.get("etag");
+    log(`直传成功 200，ETag: ${state.etag}`, "l-ok");
+
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    state.sha256 = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+    log(`SHA-256: ${state.sha256}`);
+
+    state.idemKey = crypto.randomUUID();
+    $("btn-complete").disabled = false;
+    log("③ 直传完成，点击「完成上传(建版本)」", "l-warn");
+  } catch (e) { log("上传失败: " + e.message, "l-err"); }
+  finally { $("btn-upload").disabled = false; }
+}
+
+async function runComplete() {
+  const { pid, did } = targetIds();
+  try {
+    $("btn-complete").disabled = true;
+    const data = await api(`/projects/${pid}/documents/${did}/versions/uploads/${state.uploadId}/complete`, {
+      method: "POST",
+      headers: { "Idempotency-Key": state.idemKey },
+      body: JSON.stringify({ etag: state.etag, sha256: state.sha256 }),
+    });
+    const v = data.version;
+    $("r-version").textContent = v.version_number;
+    $("r-active").innerHTML = data.is_active ? '<span class="badge on">是</span>' : '<span class="badge">否</span>';
+    $("r-file").textContent = v.file_name;
+    $("r-size").textContent = v.size_bytes + " bytes";
+    $("r-status").textContent = v.parse_status;
+    $("r-pid").textContent = v.public_id;
+    $("r-created").textContent = v.created_at;
+    $("result").classList.remove("hidden");
+    log(`完成上传：版本 ${v.version_number}，活动版本=${data.is_active}`, "l-ok");
+    log(`Idempotency-Key: ${state.idemKey}（重复 complete 且同 key 会返回同一版本）`, "lk");
+  } catch (e) { log("完成上传失败: " + e.message, "l-err"); }
+  finally { $("btn-complete").disabled = false; }
+}
+
+function reset() {
+  ["result", "fileMeta"].forEach(id => $(id).classList.add("hidden"));
+  $("fileMeta").textContent = "";
+  $("log").innerHTML = "";
+  state.uploadId = state.objectKey = state.etag = state.sha256 = state.idemKey = null;
+  $("btn-complete").disabled = true;
+}
+
+(function () {
+  document.addEventListener("DOMContentLoaded", () => {
+    const saved = localStorage.getItem("test_token");
+    if (saved) $("token").value = saved;
+  });
+})();
+</script>
+</body>
+</html>

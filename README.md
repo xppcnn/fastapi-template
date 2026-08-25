@@ -78,6 +78,12 @@ presigned_get_url("doc/yyy.pdf", expires=timedelta(hours=1))
 - presign 与 `stat_object` 为同步短调用，可直接在 endpoint 调用；网络传输类（`put_object`/`get_object`/`remove_object`）已内部 `asyncio.to_thread` 包装。
 - 应用容器化时把 `SILO_ENDPOINT` 改成 `silo:9000`。
 
+### 上传功能测试页
+
+访问 `http://127.0.0.1:8000/static/upload_test.html` 可图形化测试文档上传链路（登录 → 选项目/文档 → 发起预签名 → 浏览器直传 SILO → 完成上传建版本），步骤与日志一一对应 §6.5/§6.6。
+
+前提：SILO 容器运行中（`docker compose up -d`），且桶 CORS 已放行 `localhost:8000`（docker-compose 里 `MINIO_API_CORS_ALLOW_ORIGIN` 已配置）。
+
 ## Alembic 使用说明
 
 数据库变更通过 **Alembic 自动管理**：迁移文件记录变更历史，`alembic upgrade head` 自动应用，数据库侧的 `alembic_version` 表追踪当前版本（不会重复执行、不会漏）。

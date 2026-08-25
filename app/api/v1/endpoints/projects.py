@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Header, Query, status
 
 from app.api.dependencies import CurrentPrincipalDep
 from app.core.database import DbSession
@@ -10,11 +10,16 @@ from app.core.response import ApiResponse, ok
 from app.models.document import Document
 from app.models.project import Project
 from app.schemas.document import (
+    CompleteUploadRequest,
+    CompleteUploadResponse,
     CreateDocumentRequest,
     CreateDocumentResponse,
     DocumentItemResponse,
     DocumentListQuery,
     DocumentListResponse,
+    DocumentVersionResponse,
+    UploadRequest,
+    UploadResponse,
 )
 from app.schemas.project import (
     ProjectCreateRequest,
@@ -23,10 +28,18 @@ from app.schemas.project import (
     ProjectUpdateRequest,
 )
 from app.services.documents import (
+    complete_upload as complete_upload_service,
+)
+from app.services.documents import (
     create_document,
     document_detail,
     document_lists,
+)
+from app.services.documents import (
     delete_document as delete_document_service,
+)
+from app.services.documents import (
+    initiate_upload as initiate_upload_service,
 )
 from app.services.projects import (
     create_project,
@@ -220,3 +233,63 @@ async def delete_document(
         document_public_id=document_id,
     )
     return ok()
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/versions/uploads",
+    response_model=ApiResponse[UploadResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def initiate_upload(
+    project_id: UUID,
+    document_id: UUID,
+    payload: UploadRequest,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+):
+    upload, upload_url = await initiate_upload_service(
+        session=session,
+        project_public_id=project_id,
+        document_public_id=document_id,
+        organization_id=principal.organization_id,
+        payload=payload,
+    )
+    return ok(
+        UploadResponse(
+            upload_id=upload.public_id,
+            object_key=upload.object_key,
+            upload_url=upload_url,
+            expires_at=upload.expires_at,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/versions/uploads/{upload_id}/complete",
+    response_model=ApiResponse[CompleteUploadResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def complete_upload(
+    project_id: UUID,
+    document_id: UUID,
+    upload_id: UUID,
+    payload: CompleteUploadRequest,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+    idempotency_key: Annotated[str | None, Header(max_length=64)] = None,
+):
+    version, is_active = await complete_upload_service(
+        session=session,
+        project_public_id=project_id,
+        document_public_id=document_id,
+        upload_public_id=upload_id,
+        organization_id=principal.organization_id,
+        payload=payload,
+        idempotency_key=idempotency_key,
+    )
+    return ok(
+        CompleteUploadResponse(
+            version=DocumentVersionResponse.model_validate(version),
+            is_active=is_active,
+        )
+    )

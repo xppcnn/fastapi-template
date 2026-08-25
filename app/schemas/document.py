@@ -4,9 +4,14 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.document import DocType
+from app.models.document import DocType, ParseStatus
+
+UPLOAD_FILE_TYPES: dict[str, str] = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
 class DocumentListQuery(BaseModel):
@@ -49,3 +54,48 @@ class DocumentListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class UploadRequest(BaseModel):
+    file_name: str = Field(min_length=1, max_length=255)
+    content_type: str
+    size_bytes: int = Field(ge=1, le=50 * 1024 * 1024)
+
+    @model_validator(mode="after")
+    def content_type_matches_extension(self) -> "UploadRequest":
+        ext = self.file_name.rsplit(".", 1)[-1].lower() if "." in self.file_name else ""
+        expected = UPLOAD_FILE_TYPES.get(ext)
+        if expected is None:
+            raise ValueError("file extension must be pdf or docx")
+        if self.content_type != expected:
+            raise ValueError(f"content_type must be {expected} for .{ext} files")
+        return self
+
+
+class UploadResponse(BaseModel):
+    upload_id: UUID
+    object_key: str
+    upload_url: str
+    expires_at: datetime
+
+
+class CompleteUploadRequest(BaseModel):
+    etag: str = Field(min_length=1, max_length=300)
+    sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+
+
+class DocumentVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    public_id: UUID
+    version_number: int
+    file_name: str
+    content_type: str
+    size_bytes: int
+    parse_status: ParseStatus
+    created_at: datetime
+
+
+class CompleteUploadResponse(BaseModel):
+    version: DocumentVersionResponse
+    is_active: bool
