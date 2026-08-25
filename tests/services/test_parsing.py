@@ -102,9 +102,7 @@ def test_extract_blocks_follows_body_order() -> None:
 
 
 def test_extract_blocks_falls_back_without_body() -> None:
-    no_body = {
-        k: v for k, v in SAMPLE_DOCLING_JSON.items() if k != "body"
-    }
+    no_body = {k: v for k, v in SAMPLE_DOCLING_JSON.items() if k != "body"}
     blocks = extract_blocks(no_body)
     assert [b["block_type"] for b in blocks] == [
         "title",
