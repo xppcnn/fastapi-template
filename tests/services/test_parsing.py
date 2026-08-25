@@ -33,15 +33,31 @@ SAMPLE_DOCLING_JSON = {
     "body": {
         "children": [
             {"$ref": "#/texts/0"},
-            {"$ref": "#/texts/1"},
-            {"$ref": "#/tables/0"},
+            {"$ref": "#/groups/0"},
             {"$ref": "#/texts/2"},
         ]
     },
     "texts": [
-        {"text": "第一章 招标公告", "label": "title", "prov": [{"page_no": 1}]},
-        {"text": "本项目为示例。", "label": "paragraph", "prov": [{"page_no": 1}]},
-        {"text": "预算：100万", "label": "paragraph", "prov": [{"page_no": 2}]},
+        {
+            "text": "第一章 招标公告",
+            "label": "section_header",
+            "prov": [],
+            "children": [
+                {"$ref": "#/texts/1"},
+                {"$ref": "#/tables/0"},
+            ],
+        },
+        {"text": "本项目为示例。", "label": "paragraph", "prov": []},
+        {"text": "预算：100万", "label": "paragraph", "prov": []},
+    ],
+    "groups": [
+        {
+            "name": "g0",
+            "self_ref": "#/groups/0",
+            "children": [
+                {"$ref": "#/texts/2"},
+            ],
+        }
     ],
     "tables": [
         {
@@ -86,16 +102,15 @@ SAMPLE_DOCLING_JSON = {
 }
 
 
-def test_extract_blocks_follows_body_order() -> None:
+def test_extract_blocks_recurses_into_groups() -> None:
     blocks = extract_blocks(SAMPLE_DOCLING_JSON)
     assert len(blocks) == 4
     assert [b["block_type"] for b in blocks] == [
-        "title",
+        "section_header",
         "paragraph",
         "table",
         "paragraph",
     ]
-    assert blocks[2]["page_no"] == 2
     assert "| 序号 | 项目 |" in blocks[2]["text"]
     assert "| 1 | 信息化平台 |" in blocks[2]["text"]
     assert blocks[3]["text"] == "预算：100万"
@@ -103,9 +118,10 @@ def test_extract_blocks_follows_body_order() -> None:
 
 def test_extract_blocks_falls_back_without_body() -> None:
     no_body = {k: v for k, v in SAMPLE_DOCLING_JSON.items() if k != "body"}
+    no_body["groups"] = []
     blocks = extract_blocks(no_body)
     assert [b["block_type"] for b in blocks] == [
-        "title",
+        "section_header",
         "paragraph",
         "paragraph",
         "table",

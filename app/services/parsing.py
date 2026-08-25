@@ -70,65 +70,84 @@ def _table_to_markdown(data: dict) -> str:
 
 
 def extract_blocks(document_json: dict) -> list[dict]:
-    """把 DoclingDocument JSON 抽成 blocks,按 body 引用的文档阅读顺序排序。
+    """把 DoclingDocument JSON 抽成 blocks。
 
-    DoclingDocument 序列化的顶层 texts/tables 是分开的两个列表,
-    阅读顺序在 body.children 的 $ref 引用里;解析失败时退回旧逻辑
-    (先文本后表格)。
+    真实结构:body.children 是深度嵌套树——texts 节点(section_header 等)
+    和 groups 节点都可能带 children(引用 texts/groups/tables),表格往往
+    挂在某个 section 的 children 里;DOCX 无 prov 坐标。遍历时把 text 与
+    group 节点都当作树节点递归展开(先父后子,即标题在前内容在后),
+    同一节点仅访问一次;全部解析失败时回退为先文本后表格。
     """
     text_items = document_json.get("texts") or []
     table_items = document_json.get("tables") or []
+    group_items = document_json.get("groups") or []
+    blocks: list[dict] = []
+    index = 0
 
-    def collect(refs: list) -> list[dict]:
-        blocks: list[dict] = []
-        index = 0
+    def add(item: dict, kind: str) -> None:
+        nonlocal index
+        if kind == "table":
+            text = _table_to_markdown(item.get("data") or {})
+            block_type = "table"
+        else:
+            text = (item.get("text") or "").strip()
+            if not text:
+                return
+            block_type = item.get("label") or "text"
+        page_no = ((item.get("prov") or [{}])[0] or {}).get("page_no")
+        index += 1
+        blocks.append(
+            {
+                "order_index": index,
+                "block_type": block_type,
+                "text": text,
+                "page_no": page_no,
+            }
+        )
 
-        def add(item: dict, kind: str) -> None:
-            nonlocal index
-            if kind == "table":
-                text = _table_to_markdown(item.get("data") or {})
-                block_type = "table"
-            else:
-                text = (item.get("text") or "").strip()
-                if not text:
-                    return
-                block_type = item.get("label") or "text"
-            page_no = ((item.get("prov") or [{}])[0] or {}).get("page_no")
-            index += 1
-            blocks.append(
-                {
-                    "order_index": index,
-                    "block_type": block_type,
-                    "text": text,
-                    "page_no": page_no,
-                }
-            )
+    def handle_ref(ref: dict) -> None:
+        target = ref.get("$ref") or ""
+        if target.startswith("#/texts/"):
+            idx = int(target.rsplit("/", 1)[1])
+            if idx in visited_texts or idx >= len(text_items):
+                return
+            visited_texts.add(idx)
+            item = text_items[idx]
+            add(item, "text")
+            for child in item.get("children") or []:
+                if isinstance(child, dict):
+                    handle_ref(child)
+        elif target.startswith("#/tables/"):
+            idx = int(target.rsplit("/", 1)[1])
+            if 0 <= idx < len(table_items):
+                add(table_items[idx], "table")
+        elif target.startswith("#/groups/"):
+            idx = int(target.rsplit("/", 1)[1])
+            if idx in visited_groups or idx >= len(group_items):
+                return
+            visited_groups.add(idx)
+            for child in group_items[idx].get("children") or []:
+                if isinstance(child, dict):
+                    handle_ref(child)
 
-        for ref in refs:
-            if not isinstance(ref, dict):
-                continue
-            target = ref.get("$ref") or ""
-            if target.startswith("#/texts/"):
-                idx = int(target.rsplit("/", 1)[1])
-                if 0 <= idx < len(text_items):
-                    add(text_items[idx], "text")
-            elif target.startswith("#/tables/"):
-                idx = int(target.rsplit("/", 1)[1])
-                if 0 <= idx < len(table_items):
-                    add(table_items[idx], "table")
-        return blocks
+    visited_texts: set[int] = set()
+    visited_groups: set[int] = set()
 
     body = document_json.get("body")
     refs = (body.get("children") or []) if isinstance(body, dict) else []
-    ordered = collect(refs)
-    if ordered:
-        return ordered
+    if refs:
+        for ref in refs:
+            if isinstance(ref, dict):
+                handle_ref(ref)
+    if blocks:
+        return blocks
 
     # 回退:无 body 引用(或全部无法解析)时,先文本后表格
-    fallback_refs: list[dict[str, str]] = [
-        {"$ref": f"#/texts/{i}"} for i in range(len(text_items))
-    ] + [{"$ref": f"#/tables/{i}"} for i in range(len(table_items))]
-    return collect(fallback_refs)
+    for item in text_items:
+        add(item, "text")
+    for item in table_items:
+        add(item, "table")
+    return blocks
 
 
 def spawn_parse(version_id: int) -> None:
