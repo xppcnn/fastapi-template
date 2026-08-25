@@ -70,36 +70,65 @@ def _table_to_markdown(data: dict) -> str:
 
 
 def extract_blocks(document_json: dict) -> list[dict]:
-    """把 DoclingDocument JSON 抽成 blocks(顺序:先文本后表格,各按文档内顺序)。"""
-    blocks: list[dict] = []
-    index = 0
-    for item in document_json.get("texts") or []:
-        text = (item.get("text") or "").strip()
-        if not text:
-            continue
-        index += 1
-        page_no = ((item.get("prov") or [{}])[0] or {}).get("page_no")
-        blocks.append(
-            {
-                "order_index": index,
-                "block_type": item.get("label") or "text",
-                "text": text,
-                "page_no": page_no,
-            }
-        )
-    for item in document_json.get("tables") or []:
-        data = item.get("data") or {}
-        index += 1
-        page_no = ((item.get("prov") or [{}])[0] or {}).get("page_no")
-        blocks.append(
-            {
-                "order_index": index,
-                "block_type": "table",
-                "text": _table_to_markdown(data),
-                "page_no": page_no,
-            }
-        )
-    return blocks
+    """把 DoclingDocument JSON 抽成 blocks,按 body 引用的文档阅读顺序排序。
+
+    DoclingDocument 序列化的顶层 texts/tables 是分开的两个列表,
+    阅读顺序在 body.children 的 $ref 引用里;解析失败时退回旧逻辑
+    (先文本后表格)。
+    """
+    text_items = document_json.get("texts") or []
+    table_items = document_json.get("tables") or []
+
+    def collect(refs: list) -> list[dict]:
+        blocks: list[dict] = []
+        index = 0
+
+        def add(item: dict, kind: str) -> None:
+            nonlocal index
+            if kind == "table":
+                text = _table_to_markdown(item.get("data") or {})
+                block_type = "table"
+            else:
+                text = (item.get("text") or "").strip()
+                if not text:
+                    return
+                block_type = item.get("label") or "text"
+            page_no = ((item.get("prov") or [{}])[0] or {}).get("page_no")
+            index += 1
+            blocks.append(
+                {
+                    "order_index": index,
+                    "block_type": block_type,
+                    "text": text,
+                    "page_no": page_no,
+                }
+            )
+
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            target = ref.get("$ref") or ""
+            if target.startswith("#/texts/"):
+                idx = int(target.rsplit("/", 1)[1])
+                if 0 <= idx < len(text_items):
+                    add(text_items[idx], "text")
+            elif target.startswith("#/tables/"):
+                idx = int(target.rsplit("/", 1)[1])
+                if 0 <= idx < len(table_items):
+                    add(table_items[idx], "table")
+        return blocks
+
+    body = document_json.get("body")
+    refs = (body.get("children") or []) if isinstance(body, dict) else []
+    ordered = collect(refs)
+    if ordered:
+        return ordered
+
+    # 回退:无 body 引用(或全部无法解析)时,先文本后表格
+    fallback_refs: list[dict[str, str]] = [
+        {"$ref": f"#/texts/{i}"} for i in range(len(text_items))
+    ] + [{"$ref": f"#/tables/{i}"} for i in range(len(table_items))]
+    return collect(fallback_refs)
 
 
 def spawn_parse(version_id: int) -> None:

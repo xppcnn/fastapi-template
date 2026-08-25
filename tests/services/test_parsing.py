@@ -30,6 +30,14 @@ def session_factory() -> Generator[async_sessionmaker, None, None]:
 
 
 SAMPLE_DOCLING_JSON = {
+    "body": {
+        "children": [
+            {"$ref": "#/texts/0"},
+            {"$ref": "#/texts/1"},
+            {"$ref": "#/tables/0"},
+            {"$ref": "#/texts/2"},
+        ]
+    },
     "texts": [
         {"text": "第一章 招标公告", "label": "title", "prov": [{"page_no": 1}]},
         {"text": "本项目为示例。", "label": "paragraph", "prov": [{"page_no": 1}]},
@@ -78,14 +86,33 @@ SAMPLE_DOCLING_JSON = {
 }
 
 
-def test_extract_blocks_from_docling_json() -> None:
+def test_extract_blocks_follows_body_order() -> None:
     blocks = extract_blocks(SAMPLE_DOCLING_JSON)
     assert len(blocks) == 4
-    assert blocks[0]["block_type"] == "title"
-    assert blocks[0]["page_no"] == 1
+    assert [b["block_type"] for b in blocks] == [
+        "title",
+        "paragraph",
+        "table",
+        "paragraph",
+    ]
+    assert blocks[2]["page_no"] == 2
+    assert "| 序号 | 项目 |" in blocks[2]["text"]
+    assert "| 1 | 信息化平台 |" in blocks[2]["text"]
+    assert blocks[3]["text"] == "预算：100万"
+
+
+def test_extract_blocks_falls_back_without_body() -> None:
+    no_body = {
+        k: v for k, v in SAMPLE_DOCLING_JSON.items() if k != "body"
+    }
+    blocks = extract_blocks(no_body)
+    assert [b["block_type"] for b in blocks] == [
+        "title",
+        "paragraph",
+        "paragraph",
+        "table",
+    ]
     assert blocks[3]["block_type"] == "table"
-    assert "| 序号 | 项目 |" in blocks[3]["text"]
-    assert "| 1 | 信息化平台 |" in blocks[3]["text"]
 
 
 def test_run_parse_success_persists_blocks_and_status(
