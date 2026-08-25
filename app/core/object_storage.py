@@ -72,9 +72,7 @@ def presigned_put_url(
     return get_client().presigned_put_object(_bucket(), object_key, expires=expires)
 
 
-def presigned_get_url(
-    object_key: str, expires: timedelta = timedelta(hours=1)
-) -> str:
+def presigned_get_url(object_key: str, expires: timedelta = timedelta(hours=1)) -> str:
     return get_client().presigned_get_object(_bucket(), object_key, expires=expires)
 
 

@@ -6,9 +6,7 @@ import structlog
 from app.core.logging import bind_request_id, configure_logging, reset_request_id
 
 
-def _restore_root_logger(
-    handlers: list[logging.Handler], level: int
-) -> None:
+def _restore_root_logger(handlers: list[logging.Handler], level: int) -> None:
     root_logger = logging.getLogger()
     root_logger.handlers = handlers
     root_logger.setLevel(level)

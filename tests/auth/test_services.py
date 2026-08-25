@@ -50,9 +50,7 @@ def test_register_user_commits_and_persists(
             )
             await session.commit()
         async with session_factory() as verify_session:
-            user = await get_user_by_email(
-                verify_session, email="owner@example.com"
-            )
+            user = await get_user_by_email(verify_session, email="owner@example.com")
             assert user is not None
             assert user.public_id == result.user.public_id
 

@@ -29,6 +29,7 @@ class ProjectListResponse(BaseModel):
     page: int
     page_size: int
 
+
 class ProjectUpdateRequest(ProjectCreateRequest):
     status: ProjectStatus | None = None
 
