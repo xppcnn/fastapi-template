@@ -1,13 +1,15 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import false, func, select
+from sqlalchemy import false, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.object_storage import utcnow_naive
 from app.models.document import (
     DocType,
     Document,
     DocumentVersion,
+    ParseStatus,
     UploadSession,
     UploadSessionStatus,
 )
@@ -207,3 +209,24 @@ async def get_document_version(
     )
     version = (await session.execute(stmt)).scalar_one_or_none()
     return version
+
+
+async def claim_version_for_parsing(
+    session: AsyncSession, *, version_id: int
+) -> bool:
+    """原子认领版本进入 PARSING 状态；已在解析(或已删除)返回 False。"""
+    stmt = (
+        update(DocumentVersion)
+        .where(
+            DocumentVersion.id == version_id,
+            DocumentVersion.parse_status != ParseStatus.PARSING,
+            DocumentVersion.is_deleted == false(),
+        )
+        .values(
+            parse_status=ParseStatus.PARSING,
+            parsing_started_at=utcnow_naive(),
+            parse_error=None,
+        )
+    )
+    result = await session.execute(stmt)
+    return result.rowcount == 1
