@@ -59,3 +59,13 @@ def test_default_development_jwt_secret_is_at_least_32_bytes(monkeypatch) -> Non
     settings = Settings(_env_file=None)
 
     assert len(settings.jwt_secret_key.encode()) >= 32
+
+
+def test_docling_settings_defaults() -> None:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.docling_serve_base_url == "http://localhost:5001"
+    assert settings.docling_parse_timeout_minutes == 15
+    assert settings.docling_do_ocr is True
+    assert settings.docling_table_mode in ("fast", "accurate")

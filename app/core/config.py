@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     silo_root_password: str = "silo-admin"
     silo_bucket: str = "documents"
     silo_secure: bool = False
+    docling_serve_base_url: str = "http://localhost:5001"
+    docling_serve_api_key: str = ""
+    docling_parse_timeout_minutes: int = 15
+    docling_do_ocr: bool = True
+    docling_table_mode: Literal["fast", "accurate"] = "fast"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
