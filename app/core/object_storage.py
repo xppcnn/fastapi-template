@@ -1,4 +1,5 @@
 import asyncio
+import io
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any
@@ -41,6 +42,8 @@ async def put_object(
     *,
     content_type: str = "application/octet-stream",
 ) -> ObjectWriteResult:
+    if isinstance(data, bytes):
+        data = io.BytesIO(data)
     return await asyncio.to_thread(
         lambda: get_client().put_object(
             _bucket(), object_key, data, length, content_type=content_type
