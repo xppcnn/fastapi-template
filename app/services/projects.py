@@ -81,8 +81,13 @@ async def delete_project(
     project.is_deleted = True
     await session.flush()
 
+
 async def update_project(
-    session: AsyncSession, *, organization_id: int, public_id: UUID, payload: ProjectUpdateRequest
+    session: AsyncSession,
+    *,
+    organization_id: int,
+    public_id: UUID,
+    payload: ProjectUpdateRequest,
 ) -> Project:
     project = await get_project(
         session=session, organization_id=organization_id, public_id=public_id
@@ -90,4 +95,3 @@ async def update_project(
     return await project_repository.update_project(
         session, project=project, payload=payload
     )
-    

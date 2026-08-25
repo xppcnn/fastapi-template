@@ -4,7 +4,9 @@ from app.core.config import Settings, get_settings
 
 
 def test_database_url_override(monkeypatch) -> None:
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pw@db.example:5432/other")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+asyncpg://user:pw@db.example:5432/other"
+    )
     get_settings.cache_clear()
     try:
         assert get_settings().database_url == (

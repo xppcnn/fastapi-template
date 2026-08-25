@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import false, func, select, update
@@ -213,9 +213,7 @@ async def get_document_version(
     return version
 
 
-async def claim_version_for_parsing(
-    session: AsyncSession, *, version_id: int
-) -> bool:
+async def claim_version_for_parsing(session: AsyncSession, *, version_id: int) -> bool:
     """原子认领版本进入 PARSING 状态；已在解析(或已删除)返回 False。"""
     stmt = (
         update(DocumentVersion)
@@ -230,7 +228,5 @@ async def claim_version_for_parsing(
             parse_error=None,
         )
     )
-    result: CursorResult = cast(
-        CursorResult, await session.execute(stmt)
-    )
+    result: CursorResult = cast(CursorResult, await session.execute(stmt))
     return result.rowcount == 1
