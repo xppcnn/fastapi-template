@@ -19,6 +19,7 @@ from app.schemas.document import (
     DocumentVersionListQuery,
     DocumentVersionListResponse,
     DocumentVersionResponse,
+    ParsedResultResponse,
     UploadRequest,
     UploadResponse,
 )
@@ -36,6 +37,7 @@ from app.services.documents import (
     document_detail,
     document_lists,
     document_versions,
+    parsed_document_result,
 )
 from app.services.documents import (
     delete_document as delete_document_service,
@@ -308,3 +310,24 @@ async def parse_project_document(
     session: DbSession,
 ):
     pass
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}/versions/{version_id}/parsed",
+    response_model=ApiResponse[ParsedResultResponse],
+)
+async def parsed_project_document(
+    project_id: UUID,
+    document_id: UUID,
+    version_id: UUID,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+):
+    result = await parsed_document_result(
+        session,
+        project_public_id=project_id,
+        document_public_id=document_id,
+        version_public_id=version_id,
+        organization_id=principal.organization_id,
+    )
+    return ok(result)

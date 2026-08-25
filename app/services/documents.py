@@ -8,12 +8,14 @@ from app.core.exceptions import AppError
 from app.core.object_storage import (
     create_presigned_upload,
     generate_object_key,
+    presigned_get_url,
     utcnow_naive,
     verify_object_size,
 )
 from app.models.document import (
     Document,
     DocumentVersion,
+    ParseStatus,
     UploadSession,
     UploadSessionStatus,
 )
@@ -26,6 +28,7 @@ from app.repositories.documents import (
     get_document_version,
     get_idempotent_version,
     get_upload_session_by_public_id,
+    get_version_by_id,
     insert_document,
     insert_document_version,
     insert_upload_session,
@@ -42,6 +45,7 @@ from app.schemas.document import (
     DocumentVersionListItem,
     DocumentVersionListQuery,
     DocumentVersionListResponse,
+    ParsedResultResponse,
     UploadRequest,
 )
 from app.services.parsing import spawn_parse
@@ -320,3 +324,43 @@ async def parse_document(
     await session.commit()
     spawn_parse(version.id)
     return version
+
+
+async def parsed_result_urls(session, *, version_id: int) -> tuple[str, str]:
+    version = await get_version_by_id(session, version_id=version_id)
+    if version is None:
+        raise AppError("版本不存在", code=404)
+    if version.parse_status != ParseStatus.PARSED:
+        raise AppError("版本尚未解析完成", code=400)
+    if not version.parsed_markdown_object_key or not version.parsed_object_key:
+        raise AppError("解析产物缺失", code=409)
+    md_url = presigned_get_url(version.parsed_markdown_object_key)
+    json_url = presigned_get_url(version.parsed_object_key)
+    return md_url, json_url
+
+
+async def parsed_document_result(
+    session,
+    *,
+    project_public_id: UUID,
+    document_public_id: UUID,
+    version_public_id: UUID,
+    organization_id: int,
+) -> ParsedResultResponse:
+    document = await _require_document(
+        session,
+        organization_id=organization_id,
+        project_public_id=project_public_id,
+        document_public_id=document_public_id,
+    )
+    version = await get_document_version(
+        session, document=document, version_id=version_public_id
+    )
+    if version is None:
+        raise AppError("当前版本不存在", code=404)
+    md_url, json_url = await parsed_result_urls(session, version_id=version.id)
+    return ParsedResultResponse(
+        markdown_url=md_url,
+        json_url=json_url,
+        parse_error=version.parse_error,
+    )

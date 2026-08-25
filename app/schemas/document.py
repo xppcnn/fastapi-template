@@ -135,3 +135,9 @@ class DocumentVersionListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class ParsedResultResponse(BaseModel):
+    markdown_url: str
+    json_url: str
+    parse_error: str | None = None
