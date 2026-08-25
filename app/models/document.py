@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -127,13 +128,52 @@ class DocumentVersion(Base):
         server_default=ParseStatus.UPLOADED.value,
     )
 
-    parse_job_id: Mapped[int | None] = mapped_column(
-        nullable=True, comment="解析任务 id；待 jobs 表创建后补充外键"
+    parse_job_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="docling-serve 任务 id"
     )
+
+    parsed_object_key: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, comment="解析产物(DoclingDocument JSON)对象键"
+    )
+    parsed_markdown_object_key: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, comment="解析产物(Markdown)对象键"
+    )
+    parse_error: Mapped[str | None] = mapped_column(
+        String(2000), nullable=True, comment="解析失败原因或 partial_success 警告"
+    )
+    parsing_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    parsed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     document: Mapped[Document] = relationship(
         back_populates="versions", foreign_keys=[document_id]
     )
+    blocks: Mapped[list[DocumentBlock]] = relationship(
+        back_populates="version", passive_deletes=True
+    )
+
+
+class DocumentBlock(Base):
+    __tablename__ = "document_blocks"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "version_id", "order_index", name="uq_document_blocks_version_order"
+        ),
+    )
+
+    version_id: Mapped[int] = mapped_column(
+        ForeignKey("document_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    block_type: Mapped[str] = mapped_column(
+        String(50), comment="text / table / title / ..."
+    )
+    text: Mapped[str] = mapped_column(Text)
+    page_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    version: Mapped[DocumentVersion] = relationship(back_populates="blocks")
 
 
 class UploadSession(Base):
