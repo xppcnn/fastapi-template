@@ -299,7 +299,7 @@ async def document_version_list(
     return ok(result)
 
 
-@router.post("{project_id}/documents/{document_id}/versions/{version_id}/parse")
+@router.post("/{project_id}/documents/{document_id}/versions/{version_id}/parse")
 async def parse_project_document(
     project_id: UUID,
     document_id: UUID,
