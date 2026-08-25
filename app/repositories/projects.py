@@ -66,4 +66,5 @@ async def update_project(
         setattr(project, field, value)
     project.version += 1
     await session.flush()
+    await session.refresh(project)
     return project

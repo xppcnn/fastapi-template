@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import select
@@ -8,15 +7,12 @@ from app.core.exceptions import AppError
 from app.models.project import Project
 from app.repositories import projects as project_repository
 from app.repositories.projects import get_by_public_id, insert_project
-from app.schemas.project import ProjectCreateRequest, ProjectUpdateRequest
-
-
-@dataclass(frozen=True)
-class ProjectPage:
-    items: list[Project]
-    total: int
-    page: int
-    page_size: int
+from app.schemas.project import (
+    ProjectCreateRequest,
+    ProjectListResponse,
+    ProjectResponse,
+    ProjectUpdateRequest,
+)
 
 
 async def create_project(
@@ -52,14 +48,19 @@ async def list_projects(
     organization_id: int,
     page: int,
     page_size: int,
-) -> ProjectPage:
+) -> ProjectListResponse:
     items, total = await project_repository.list_projects(
         session,
         organization_id=organization_id,
         page=page,
         page_size=page_size,
     )
-    return ProjectPage(items=items, total=total, page=page, page_size=page_size)
+    return ProjectListResponse(
+        items=[ProjectResponse.model_validate(item) for item in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 async def delete_project(

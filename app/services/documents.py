@@ -1,8 +1,7 @@
-from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError
@@ -15,13 +14,16 @@ from app.core.object_storage import (
 from app.models.document import (
     Document,
     DocumentVersion,
+    ParseStatus,
     UploadSession,
     UploadSessionStatus,
 )
 from app.repositories.documents import (
     complete_upload_session,
+    document_version_list,
     get_document_by_public_id,
     get_document_lists,
+    get_document_version,
     get_idempotent_version,
     get_upload_session_by_public_id,
     insert_document,
@@ -34,19 +36,16 @@ from app.repositories.projects import get_by_public_id
 from app.schemas.document import (
     CompleteUploadRequest,
     CreateDocumentRequest,
+    DocumentItemResponse,
     DocumentListQuery,
+    DocumentListResponse,
+    DocumentVersionListItem,
+    DocumentVersionListQuery,
+    DocumentVersionListResponse,
     UploadRequest,
 )
 
 UPLOAD_URL_EXPIRE_MINUTES = 10
-
-
-@dataclass(frozen=True)
-class DocumentPage:
-    items: list[Document]
-    total: int
-    page: int
-    page_size: int
 
 
 async def create_document(
@@ -89,7 +88,7 @@ async def document_lists(
     query: DocumentListQuery,
     organization_id: int,
     project_public_id: UUID,
-) -> DocumentPage:
+) -> DocumentListResponse:
     project = await get_by_public_id(
         session, organization_id=organization_id, public_id=project_public_id
     )
@@ -99,8 +98,11 @@ async def document_lists(
     items, total = await get_document_lists(
         session, organization_id=organization_id, project_id=project.id, query=query
     )
-    return DocumentPage(
-        items=items, total=total, page=query.page, page_size=query.page_size
+    return DocumentListResponse(
+        items=[DocumentItemResponse.model_validate(item) for item in items],
+        total=total,
+        page=query.page,
+        page_size=query.page_size,
     )
 
 
@@ -151,7 +153,10 @@ async def delete_document(
 
 
 async def _require_document(
-    session: AsyncSession, *, organization_id: int, project_public_id: UUID,
+    session: AsyncSession,
+    *,
+    organization_id: int,
+    project_public_id: UUID,
     document_public_id: UUID,
 ) -> Document:
     project = await get_by_public_id(
@@ -258,3 +263,53 @@ async def complete_upload(
     document.active_version_id = version.id
     await session.flush()
     return version, True
+
+
+async def document_versions(
+    session: AsyncSession,
+    *,
+    project_public_id: UUID,
+    document_public_id: UUID,
+    organization_id: int,
+    query: DocumentVersionListQuery,
+) -> DocumentVersionListResponse:
+    document = await _require_document(
+        session,
+        organization_id=organization_id,
+        project_public_id=project_public_id,
+        document_public_id=document_public_id,
+    )
+
+    items, total = await document_version_list(
+        session=session, document=document, query=query
+    )
+    return DocumentVersionListResponse(
+        items=[
+            DocumentVersionListItem.from_orm_model(version, document.active_version_id)
+            for version in items
+        ],
+        total=total,
+        page=query.page,
+        page_size=query.page_size,
+    )
+
+
+async def parse_document(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    document_id: UUID,
+    version_id: UUID,
+    organization_id: int,
+):
+    document = await _require_document(
+        session,
+        organization_id=organization_id,
+        project_public_id=project_id,
+        document_public_id=document_id,
+    )
+    version = await get_document_version(session, document=document, version_id=version_id)
+    if version is None:
+        raise AppError("当前版本不存在")
+    if version.parse_status == ParseStatus.PARSING:
+        raise AppError("当前版本正在解析")

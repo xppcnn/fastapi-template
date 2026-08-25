@@ -1,4 +1,3 @@
-
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
@@ -6,7 +5,7 @@ from uuid import UUID
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.document import DocType, ParseStatus
+from app.models.document import DocType, DocumentVersion, ParseStatus
 
 UPLOAD_FILE_TYPES: dict[str, str] = {
     "pdf": "application/pdf",
@@ -23,6 +22,7 @@ class DocumentListQuery(BaseModel):
 class CreateDocumentRequest(BaseModel):
     name: str
     doc_type: DocType
+
 
 class CreateDocumentResponse(BaseModel):
     public_id: UUID
@@ -99,3 +99,39 @@ class DocumentVersionResponse(BaseModel):
 class CompleteUploadResponse(BaseModel):
     version: DocumentVersionResponse
     is_active: bool
+
+
+class DocumentVersionListQuery(BaseModel):
+    page: Annotated[int, Query(ge=1)] = 1
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20
+
+
+class DocumentVersionListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    public_id: UUID
+    version_number: int
+    file_name: str
+    content_type: str
+    size_bytes: int
+    parse_status: ParseStatus
+    is_active: bool = False
+    created_at: datetime
+
+    @classmethod
+    def from_orm_model(
+        cls,
+        version: DocumentVersion,
+        active_version_id: int | None,
+    ) -> "DocumentVersionListItem":
+        return cls.model_validate(version).model_copy(
+            update={"is_active": version.id == active_version_id}
+        )
+
+
+class DocumentVersionListResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    items: list[DocumentVersionListItem]
+    total: int
+    page: int
+    page_size: int

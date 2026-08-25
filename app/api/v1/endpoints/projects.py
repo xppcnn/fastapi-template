@@ -8,7 +8,6 @@ from app.api.dependencies import CurrentPrincipalDep
 from app.core.database import DbSession
 from app.core.response import ApiResponse, ok
 from app.models.document import Document
-from app.models.project import Project
 from app.schemas.document import (
     CompleteUploadRequest,
     CompleteUploadResponse,
@@ -17,6 +16,8 @@ from app.schemas.document import (
     DocumentItemResponse,
     DocumentListQuery,
     DocumentListResponse,
+    DocumentVersionListQuery,
+    DocumentVersionListResponse,
     DocumentVersionResponse,
     UploadRequest,
     UploadResponse,
@@ -34,6 +35,7 @@ from app.services.documents import (
     create_document,
     document_detail,
     document_lists,
+    document_versions,
 )
 from app.services.documents import (
     delete_document as delete_document_service,
@@ -53,18 +55,6 @@ router = APIRouter(prefix="/projects")
 logger = structlog.get_logger(__name__)
 
 
-def _project_response(project: Project) -> ProjectResponse:
-    return ProjectResponse(
-        public_id=project.public_id,
-        name=project.name,
-        description=project.description,
-        status=project.status,
-        version=project.version,
-        created_at=project.created_at,
-        updated_at=project.updated_at,
-    )
-
-
 @router.get("/", response_model=ApiResponse[ProjectListResponse])
 async def list(
     principal: CurrentPrincipalDep,
@@ -78,14 +68,7 @@ async def list(
         page=page,
         page_size=page_size,
     )
-    return ok(
-        ProjectListResponse(
-            items=[_project_response(p) for p in result.items],
-            total=result.total,
-            page=result.page,
-            page_size=result.page_size,
-        )
-    )
+    return ok(result)
 
 
 @router.get("/{project_id}", response_model=ApiResponse[ProjectResponse])
@@ -99,7 +82,7 @@ async def get(
         organization_id=principal.organization_id,
         public_id=project_id,
     )
-    return ok(_project_response(project))
+    return ok(ProjectResponse.model_validate(project))
 
 
 @router.post(
@@ -118,7 +101,7 @@ async def create(
         organization_id=principal.organization_id,
         created_by_id=principal.user_id,
     )
-    return ok(_project_response(project))
+    return ok(ProjectResponse.model_validate(project))
 
 
 @router.delete("/{project_id}", response_model=ApiResponse[None])
@@ -146,7 +129,7 @@ async def update(
         public_id=project_id,
         payload=payload,
     )
-    return ok(project)
+    return ok(ProjectResponse.model_validate(project))
 
 
 def _document_response(
@@ -293,3 +276,35 @@ async def complete_upload(
             is_active=is_active,
         )
     )
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}/versions",
+    response_model=ApiResponse[DocumentVersionListResponse],
+)
+async def document_version_list(
+    project_id: UUID,
+    document_id: UUID,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+    query: Annotated[DocumentVersionListQuery, Query()],
+):
+    result = await document_versions(
+        session=session,
+        project_public_id=project_id,
+        document_public_id=document_id,
+        organization_id=principal.organization_id,
+        query=query,
+    )
+    return ok(result)
+
+
+@router.post("{project_id}/documents/{document_id}/versions/{version_id}/parse")
+async def parse_project_document(
+    project_id: UUID,
+    document_id: UUID,
+    version_id: UUID,
+    principal: CurrentPrincipalDep,
+    session: DbSession,
+):
+    pass

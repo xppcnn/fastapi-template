@@ -12,7 +12,7 @@ from app.models.document import (
     UploadSessionStatus,
 )
 from app.repositories.pagination import paginate
-from app.schemas.document import DocumentListQuery
+from app.schemas.document import DocumentListQuery, DocumentVersionListQuery
 
 
 async def insert_document(
@@ -133,9 +133,7 @@ async def get_idempotent_version(
     return (await session.execute(stmt)).scalars().first()
 
 
-async def next_version_number(
-    session: AsyncSession, *, document_id: int
-) -> int:
+async def next_version_number(session: AsyncSession, *, document_id: int) -> int:
     max_number = await session.scalar(
         select(func.max(DocumentVersion.version_number)).where(
             DocumentVersion.document_id == document_id
@@ -180,3 +178,32 @@ async def complete_upload_session(
     upload.completed_version_id = completed_version_id
     upload.idempotency_key = idempotency_key
     await session.flush()
+
+
+async def document_version_list(
+    session: AsyncSession, *, document: Document, query: DocumentVersionListQuery
+):
+    stmt = (
+        select(DocumentVersion)
+        .where(
+            DocumentVersion.document_id == document.id,
+            DocumentVersion.is_deleted == false(),
+        )
+        .order_by(DocumentVersion.version_number.desc())
+    )
+    items, total = await paginate(
+        session=session, stmt=stmt, page=query.page, page_size=query.page_size
+    )
+    return list(items), total
+
+
+async def get_document_version(
+    session: AsyncSession, *, document: Document, version_id: UUID
+):
+    stmt = select(DocumentVersion).where(
+        DocumentVersion.public_id == version_id,
+        DocumentVersion.document_id == document.id,
+        DocumentVersion.is_deleted == false(),
+    )
+    version = (await session.execute(stmt)).scalar_one_or_none()
+    return version
