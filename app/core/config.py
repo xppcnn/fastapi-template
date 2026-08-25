@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi_template"
     )
+    silo_endpoint: str = "localhost:9000"
+    silo_root_user: str = "silo-admin"
+    silo_root_password: str = "silo-admin"
+    silo_bucket: str = "documents"
+    silo_secure: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

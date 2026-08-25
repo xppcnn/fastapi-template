@@ -38,6 +38,46 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/fastapi_templ
 
 仅限本地开发。投入生产前请改用强凭据、启用 TLS，并阅读 [SILO 部署文档](https://silo.pgsty.com/zh/operations/deployments/)。
 
+### Python 调用 SILO
+
+存储客户端集中在 `app.core.object_storage`（对标 `core.database` 持有 engine 的职责），配置从 `.env` 的 `SILO_*` 读取：
+
+```python
+from datetime import timedelta
+import io
+
+from app.core.object_storage import (
+    ensure_bucket,
+    put_object,
+    get_object,
+    stat_object,
+    remove_object,
+    presigned_put_url,
+    presigned_get_url,
+)
+
+ensure_bucket()  # 幂等建桶
+
+# 上传（异步包装，不阻塞事件循环）
+await put_object("doc/xxx.pdf", io.BytesIO(data), len(data), content_type="application/pdf")
+
+# 下载
+resp = await get_object("doc/xxx.pdf")
+data = resp.read()
+resp.release_conn()
+
+# 元数据 / 删除
+stat_object("doc/xxx.pdf")  # size / content_type / etag
+await remove_object("doc/xxx.pdf")
+
+# 预签名 URL（浏览器直传/直取，不经后端）
+presigned_put_url("doc/yyy.pdf", expires=timedelta(minutes=15))
+presigned_get_url("doc/yyy.pdf", expires=timedelta(hours=1))
+```
+
+- presign 与 `stat_object` 为同步短调用，可直接在 endpoint 调用；网络传输类（`put_object`/`get_object`/`remove_object`）已内部 `asyncio.to_thread` 包装。
+- 应用容器化时把 `SILO_ENDPOINT` 改成 `silo:9000`。
+
 ## Alembic 使用说明
 
 数据库变更通过 **Alembic 自动管理**：迁移文件记录变更历史，`alembic upgrade head` 自动应用，数据库侧的 `alembic_version` 表追踪当前版本（不会重复执行、不会漏）。
