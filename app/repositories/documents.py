@@ -1,7 +1,9 @@
 from datetime import datetime
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import false, func, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.object_storage import utcnow_naive
@@ -228,5 +230,7 @@ async def claim_version_for_parsing(
             parse_error=None,
         )
     )
-    result = await session.execute(stmt)
+    result: CursorResult = cast(
+        CursorResult, await session.execute(stmt)
+    )
     return result.rowcount == 1

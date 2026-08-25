@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from docling.datamodel.base_models import OutputFormat
+from docling.datamodel.pipeline_options import TableFormerMode
 from docling.datamodel.service.options import ConvertDocumentsOptions
 from docling.datamodel.service.targets import InBodyTarget
 from docling.service_client import AsyncDoclingServiceClient, StatusWatcherKind
@@ -20,9 +22,13 @@ class ParsedConversion:
 def build_convert_options(settings: Settings) -> ConvertDocumentsOptions:
     return ConvertDocumentsOptions(
         from_formats=[],  # 不预筛,交给服务端按文件类型
-        to_formats=["md", "json"],
+        to_formats=[OutputFormat.MARKDOWN, OutputFormat.JSON],
         do_ocr=settings.docling_do_ocr,
-        table_mode=settings.docling_table_mode,
+        table_mode=(
+            TableFormerMode.FAST
+            if settings.docling_table_mode == "fast"
+            else TableFormerMode.ACCURATE
+        ),
     )
 
 
@@ -38,7 +44,7 @@ def open_client(settings: Settings) -> AsyncDoclingServiceClient:
     )
 
 
-def submit_document(
+async def submit_document(
     client: AsyncDoclingServiceClient,
     *,
     file_path: str,
@@ -46,7 +52,7 @@ def submit_document(
     settings: Settings,
 ) -> AsyncConversionJob:
     """提交文件转换任务(上传 multipart),返回 Job(task_id 立即可用)。"""
-    return client.submit(
+    return await client.submit(
         source=Path(file_path),
         options=build_convert_options(settings),
         target=InBodyTarget(),

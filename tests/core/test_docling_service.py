@@ -16,14 +16,12 @@ def _fake_result():
 
         def export_to_dict(self) -> dict:
             return {
-                "texts": [
-                    {"text": "x", "label": "paragraph", "prov": [{"page_no": 1}]}
-                ]
+                "texts": [{"text": "x", "label": "paragraph", "prov": [{"page_no": 1}]}]
             }
 
     class FakeResult:
         status = "success"
-        errors = []
+        errors = ()
         document = FakeDoc()
 
     return FakeResult()

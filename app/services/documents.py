@@ -1,7 +1,7 @@
 from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import false, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError
@@ -14,11 +14,11 @@ from app.core.object_storage import (
 from app.models.document import (
     Document,
     DocumentVersion,
-    ParseStatus,
     UploadSession,
     UploadSessionStatus,
 )
 from app.repositories.documents import (
+    claim_version_for_parsing,
     complete_upload_session,
     document_version_list,
     get_document_by_public_id,
@@ -44,6 +44,7 @@ from app.schemas.document import (
     DocumentVersionListResponse,
     UploadRequest,
 )
+from app.services.parsing import spawn_parse
 
 UPLOAD_URL_EXPIRE_MINUTES = 10
 
@@ -297,19 +298,25 @@ async def document_versions(
 async def parse_document(
     session: AsyncSession,
     *,
-    project_id: UUID,
-    document_id: UUID,
-    version_id: UUID,
+    project_public_id: UUID,
+    document_public_id: UUID,
+    version_public_id: UUID,
     organization_id: int,
 ):
     document = await _require_document(
         session,
         organization_id=organization_id,
-        project_public_id=project_id,
-        document_public_id=document_id,
+        project_public_id=project_public_id,
+        document_public_id=document_public_id,
     )
-    version = await get_document_version(session, document=document, version_id=version_id)
+    version = await get_document_version(
+        session, document=document, version_id=version_public_id
+    )
     if version is None:
-        raise AppError("当前版本不存在")
-    if version.parse_status == ParseStatus.PARSING:
-        raise AppError("当前版本正在解析")
+        raise AppError("当前版本不存在", code=404)
+    claimed = await claim_version_for_parsing(session, version_id=version.id)
+    if not claimed:
+        raise AppError("当前版本正在解析", code=409)
+    await session.commit()
+    spawn_parse(version.id)
+    return version
