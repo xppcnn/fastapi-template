@@ -4,7 +4,7 @@
 
 ```bash
 # 1. 准备 API key(写入 .env 或环境变量)
-export DOCLING_API_KEY="<random-secret>"
+export DOCLING_SERVE_API_KEY="<random-secret>"
 
 # 2. 启动
 docker compose -f docker-compose.docling.yml up -d
@@ -29,13 +29,13 @@ curl -s http://localhost:5001/health
 
 # 2. 示例 PDF 转换(同步端点验证)
 curl -X POST http://localhost:5001/v1/convert/file \
-  -H "X-Api-Key: $DOCLING_API_KEY" \
+  -H "X-Api-Key: $DOCLING_SERVE_API_KEY" \
   -F "files=@sample.pdf" \
   -F "to_formats=md" -F "to_formats=json" -F "do_ocr=true"
 
 # 3. 异步任务流(与业务代码相同的路径)
 curl -X POST http://localhost:5001/v1/convert/file/async \
-  -H "X-Api-Key: $DOCLING_API_KEY" \
+  -H "X-Api-Key: $DOCLING_SERVE_API_KEY" \
   -F "files=@sample.pdf" -F "to_formats=md" -F "to_formats=json"
 # 记录返回的 task_id → 轮询 /v1/status/poll/{task_id} → 取 /v1/result/{task_id}
 ```

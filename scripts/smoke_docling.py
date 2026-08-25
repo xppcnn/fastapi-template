@@ -8,6 +8,7 @@
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -55,7 +56,9 @@ def make_minimal_pdf(path: Path) -> None:
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://localhost:5001")
-    parser.add_argument("--api-key", default="dev-docling-key")
+    parser.add_argument(
+        "--api-key", default=os.environ.get("DOCLING_SERVE_API_KEY", "")
+    )
     parser.add_argument("--file", default=None)
     args = parser.parse_args()
 

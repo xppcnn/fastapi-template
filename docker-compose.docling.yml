@@ -6,7 +6,7 @@ services:
     ports:
       - "5001:5001"
     environment:
-      DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:?set DOCLING_API_KEY in .env}
+      DOCLING_SERVE_API_KEY: ${DOCLING_SERVE_API_KEY:?set DOCLING_SERVE_API_KEY in .env}
       DOCLING_DEVICE: cpu
       DOCLING_NUM_THREADS: 4
       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 2
