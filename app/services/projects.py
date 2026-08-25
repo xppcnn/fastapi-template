@@ -66,13 +66,13 @@ async def list_projects(
 async def delete_project(
     session: AsyncSession, *, organization_id: int, public_id: UUID
 ) -> None:
-    project = await session.execute(
+    result = await session.execute(
         select(Project).where(
             Project.organization_id == organization_id,
             Project.public_id == public_id,
         )
     )
-    project = project.scalar_one_or_none()
+    project = result.scalar_one_or_none()
 
     if project is None:
         raise AppError("Project not found", code=404)
