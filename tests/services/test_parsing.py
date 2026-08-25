@@ -39,7 +39,40 @@ SAMPLE_DOCLING_JSON = {
         {
             "label": "table",
             "prov": [{"page_no": 2}],
-            "data": {"html": "<table><tr><td>a</td></tr></table>"},
+            "data": {
+                "num_rows": 2,
+                "num_cols": 2,
+                "table_cells": [
+                    {
+                        "text": "序号",
+                        "start_row_offset_idx": 0,
+                        "end_row_offset_idx": 1,
+                        "start_col_offset_idx": 0,
+                        "end_col_offset_idx": 1,
+                    },
+                    {
+                        "text": "项目",
+                        "start_row_offset_idx": 0,
+                        "end_row_offset_idx": 1,
+                        "start_col_offset_idx": 1,
+                        "end_col_offset_idx": 2,
+                    },
+                    {
+                        "text": "1",
+                        "start_row_offset_idx": 1,
+                        "end_row_offset_idx": 2,
+                        "start_col_offset_idx": 0,
+                        "end_col_offset_idx": 1,
+                    },
+                    {
+                        "text": "信息化平台",
+                        "start_row_offset_idx": 1,
+                        "end_row_offset_idx": 2,
+                        "start_col_offset_idx": 1,
+                        "end_col_offset_idx": 2,
+                    },
+                ],
+            },
         }
     ],
 }
@@ -51,7 +84,8 @@ def test_extract_blocks_from_docling_json() -> None:
     assert blocks[0]["block_type"] == "title"
     assert blocks[0]["page_no"] == 1
     assert blocks[3]["block_type"] == "table"
-    assert "<table>" in blocks[3]["text"]
+    assert "| 序号 | 项目 |" in blocks[3]["text"]
+    assert "| 1 | 信息化平台 |" in blocks[3]["text"]
 
 
 def test_run_parse_success_persists_blocks_and_status(

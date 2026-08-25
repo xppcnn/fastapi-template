@@ -35,6 +35,40 @@ class ParseError(Exception):
     """解析失败(可转 parse_error 落库)。"""
 
 
+def _table_to_markdown(data: dict) -> str:
+    """把 DoclingDocument 序列化后的表格(table_cells)组装成 Markdown。
+
+    TableData 序列化没有 html 字段,只有 table_cells(单元格文本 + 行列偏移),
+    按偏移填入网格再输出为 Markdown 管道表格。
+    """
+    cells = data.get("table_cells") or []
+    try:
+        num_rows = int(data.get("num_rows") or 0)
+        num_cols = int(data.get("num_cols") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if num_rows <= 0 or num_cols <= 0:
+        return ""
+
+    grid: list[list[str]] = [[""] * num_cols for _ in range(num_rows)]
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+        text = str(cell.get("text") or "").strip()
+        r1 = int(cell.get("start_row_offset_idx") or 0)
+        c1 = int(cell.get("start_col_offset_idx") or 0)
+        r2 = int(cell.get("end_row_offset_idx") or r1 + 1)
+        c2 = int(cell.get("end_col_offset_idx") or c1 + 1)
+        r1, r2 = max(0, min(r1, num_rows)), max(0, min(r2, num_rows))
+        c1, c2 = max(0, min(c1, num_cols)), max(0, min(c2, num_cols))
+        for r in range(r1, r2):
+            for c in range(c1, c2):
+                grid[r][c] = text
+
+    lines = ["| " + " | ".join(row) + " |" for row in grid]
+    return "\n".join(lines)
+
+
 def extract_blocks(document_json: dict) -> list[dict]:
     """把 DoclingDocument JSON 抽成 blocks(顺序:先文本后表格,各按文档内顺序)。"""
     blocks: list[dict] = []
@@ -61,7 +95,7 @@ def extract_blocks(document_json: dict) -> list[dict]:
             {
                 "order_index": index,
                 "block_type": "table",
-                "text": data.get("html") or "",
+                "text": _table_to_markdown(data),
                 "page_no": page_no,
             }
         )
