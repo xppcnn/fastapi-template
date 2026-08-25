@@ -1,14 +1,18 @@
 import asyncio
 import json
 import tempfile
+from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
+import httpx
 import structlog
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.core.config import get_settings
 from app.core.database import async_session_factory
 from app.core.docling_service import (
+    ParsedConversion,
     open_client,
     submit_document,
     to_parsed_conversion,
@@ -19,7 +23,7 @@ from app.core.object_storage import (
     put_object,
     utcnow_naive,
 )
-from app.models.document import DocumentBlock, ParseStatus
+from app.models.document import DocumentBlock, DocumentVersion, ParseStatus
 from app.repositories.documents import get_version_by_id
 
 logger = structlog.get_logger(__name__)
@@ -87,7 +91,6 @@ async def _run_parse(version_id: int, settings) -> None:
             return
         file_name = version.file_name
         object_key = version.object_key
-        public_id = version.public_id
 
     async with open_client(settings) as client:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -107,22 +110,27 @@ async def _run_parse(version_id: int, settings) -> None:
             version.parse_job_id = job.task_id
             await session.commit()
 
-        await _await_and_persist(version_id, public_id, job, settings)
+        await _await_and_persist(version_id, job, settings)
 
 
-async def _await_and_persist(
-    version_id: int,
-    version_public_id,
-    job,
-    settings,
-) -> None:
-    """等待 Job 终态,把产物写 MinIO + blocks 入库 + 状态回写。"""
+async def _await_and_persist(version_id: int, job, settings) -> None:
+    """等待 Job 终态,再落到 MinIO + blocks + 状态。"""
     timeout_seconds = settings.docling_parse_timeout_minutes * 60.0
     conversion = await job.result(timeout=timeout_seconds)
     parsed = to_parsed_conversion(conversion)
+    await _persist_result(version_id, parsed)
 
+
+async def _persist_result(version_id: int, parsed) -> None:
+    """把解析产物写 MinIO + blocks 入库 + 状态回写(成功/partial 共用)。"""
     if parsed.status not in ("success", "partial_success"):
         raise ParseError(f"docling 转换失败: status={parsed.status}")
+
+    async with async_session_factory() as session:
+        version = await get_version_by_id(session, version_id=version_id)
+        if version is None:
+            return
+        version_public_id = version.public_id
 
     md_key = generate_object_key(f"parsed/{version_public_id}", "parsed.md")
     json_key = generate_object_key(f"parsed/{version_public_id}", "parsed.json")
@@ -164,3 +172,84 @@ async def _mark_failed(version_id: int, message: str) -> None:
         version.parse_status = ParseStatus.FAILED
         version.parse_error = message
         await session.commit()
+
+
+_POLL_WAIT_SECONDS = 5.0
+
+
+async def find_stuck_parsing_versions(session) -> list[int]:
+    """启动对账:捞所有 parse_status=PARSING 的版本 id。"""
+    rows = await session.scalars(
+        select(DocumentVersion.id).where(
+            DocumentVersion.parse_status == ParseStatus.PARSING
+        )
+    )
+    return list(rows)
+
+
+def resume_parse(version_id: int) -> None:
+    """对账续跑:任务在 serve 侧还活着就等它完成。"""
+    task = asyncio.create_task(_resume_parse(version_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def _resume_parse(version_id: int) -> None:
+    settings = get_settings()
+    try:
+        async with async_session_factory() as session:
+            version = await get_version_by_id(session, version_id=version_id)
+            if version is None or version.parse_status != ParseStatus.PARSING:
+                return
+            task_id = version.parse_job_id
+            started_at = version.parsing_started_at or utcnow_naive()
+        if task_id is None:
+            raise ParseError("解析任务 id 缺失，请重新触发解析")
+
+        deadline = started_at + timedelta(
+            minutes=settings.docling_parse_timeout_minutes
+        )
+
+        async with open_client(settings) as client:
+            while True:
+                if utcnow_naive() > deadline:
+                    raise ParseError("解析超时")
+                status = await client._poll_task_status(
+                    task_id, wait=_POLL_WAIT_SECONDS
+                )
+                if status.task_status == "success":
+                    break
+                if status.task_status in ("failure", "skipped"):
+                    raise ParseError(f"docling 转换失败: status={status.task_status}")
+                await asyncio.sleep(_POLL_WAIT_SECONDS)
+            # __aenter__ 后 _async_client 必已创建;显式 cast 满足类型检查
+            async_client: httpx.AsyncClient = cast(
+                httpx.AsyncClient, client._async_client
+            )
+            payload = await client._fetch_convert_result_payload(
+                task_id, last_status=status, async_client=async_client
+            )
+
+        parsed = _payload_to_parsed_conversion(payload)
+        await _persist_result(version_id, parsed)
+    except Exception as exc:
+        logger.exception("resume_parse_failed", version_id=version_id, error=str(exc))
+        await _mark_failed(version_id, str(exc)[:2000])
+
+
+def _payload_to_parsed_conversion(payload) -> ParsedConversion:
+    """把 docling-serve 的 ConvertDocumentResponse 响应体映射为项目内类型。
+
+    仅在 resume 路径使用(官方客户端无公开的按 task_id 重建 Job 接口,
+    这里走其私有 _poll_task_status/_fetch_convert_result_payload)。
+    """
+    document = payload.document
+    json_content = document.json_content
+    return ParsedConversion(
+        status=getattr(payload.status, "value", str(payload.status)),
+        markdown=document.md_content or "",
+        document_json=json_content if isinstance(json_content, dict) else {},
+        errors=[
+            getattr(e, "error_message", None) or str(e) for e in (payload.errors or [])
+        ],
+    )
