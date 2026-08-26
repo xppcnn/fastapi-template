@@ -74,3 +74,11 @@ def test_get_db_rolls_back_and_closes_session_after_error(monkeypatch) -> None:
     assert session.rollback_calls == 1
     assert context.exited is True
     assert context.exit_exception_type is RuntimeError
+
+
+def test_sync_session_factory_available() -> None:
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.database import sync_session_factory
+
+    assert isinstance(sync_session_factory, sessionmaker)

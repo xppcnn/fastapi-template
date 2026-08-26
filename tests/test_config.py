@@ -71,3 +71,29 @@ def test_docling_settings_defaults() -> None:
     assert settings.docling_parse_timeout_minutes == 15
     assert settings.docling_do_ocr is True
     assert settings.docling_table_mode in ("fast", "accurate")
+
+
+def test_celery_and_redis_settings_defaults() -> None:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.redis_url == "redis://localhost:6379/0"
+    assert settings.celery_concurrency == 2
+    assert settings.worker_max_tasks_per_child == 100
+    assert settings.parsing_poll_interval_seconds == 5
+    assert settings.parsing_reconcile_limit == 50
+
+
+def test_sync_database_url_derived_from_async(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://u:pw@db.example:5432/other",
+    )
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert settings.sync_database_url == (
+            "postgresql+psycopg://u:pw@db.example:5432/other"
+        )
+    finally:
+        get_settings.cache_clear()

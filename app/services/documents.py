@@ -48,7 +48,7 @@ from app.schemas.document import (
     ParsedResultResponse,
     UploadRequest,
 )
-from app.services.parsing import spawn_parse
+from app.tasks.parsing import parsing_submit
 
 UPLOAD_URL_EXPIRE_MINUTES = 10
 
@@ -322,7 +322,7 @@ async def parse_document(
     if not claimed:
         raise AppError("当前版本正在解析", code=409)
     await session.commit()
-    spawn_parse(version.id)
+    parsing_submit.delay(version.id)
     return version
 
 

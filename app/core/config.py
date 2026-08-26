@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     docling_parse_timeout_minutes: int = 15
     docling_do_ocr: bool = True
     docling_table_mode: Literal["fast", "accurate"] = "fast"
+    redis_url: str = "redis://localhost:6379/0"
+    celery_concurrency: int = 2
+    worker_max_tasks_per_child: int = 100
+    parsing_poll_interval_seconds: int = 5
+    parsing_reconcile_limit: int = 50
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -37,6 +42,13 @@ class Settings(BaseSettings):
         if self.log_format != "auto":
             return self.log_format == "json"
         return self.environment.lower() not in {"development", "local", "test"}
+
+    @property
+    def sync_database_url(self) -> str:
+        """Celery worker 用同步驱动，URL 由 async URL 推导，不留第二条手填配置。"""
+        return self.database_url.replace(
+            "postgresql+asyncpg://", "postgresql+psycopg://"
+        )
 
 
 @lru_cache

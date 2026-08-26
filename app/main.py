@@ -1,16 +1,19 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import structlog
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
-from app.core.database import async_session_factory, engine
+from app.core.database import engine
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIDMiddleware
-from app.services.parsing import find_stuck_parsing_versions, resume_parse
+from app.tasks.parsing import parsing_reconcile
+
+logger = structlog.get_logger(__name__)
 
 settings = get_settings()
 configure_logging(settings.log_level, json_output=settings.json_logs)
@@ -18,10 +21,10 @@ configure_logging(settings.log_level, json_output=settings.json_logs)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with async_session_factory() as session:
-        stuck = await find_stuck_parsing_versions(session)
-    for version_id in stuck:
-        resume_parse(version_id)
+    try:
+        parsing_reconcile.delay()
+    except Exception:  # redis 不可达不阻塞启动;卡住的版本由 beat 对账兜底
+        logger.exception("reconcile_enqueue_failed")
     yield
     await engine.dispose()
 

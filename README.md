@@ -1,18 +1,19 @@
 # fastapi-template
 
-基于 FastAPI 的项目模板，集成 SQLAlchemy 2.0（异步）+ Alembic 数据库迁移。
+基于 FastAPI 的项目模板，集成 SQLAlchemy 2.0（异步）+ Alembic 数据库迁移 + Celery 后台任务（Redis）。
 
 ## 技术栈
 
 - FastAPI + pydantic-settings
-- SQLAlchemy 2.0（async） + asyncpg + PostgreSQL
+- SQLAlchemy 2.0（async）+ asyncpg + PostgreSQL（Worker 内为同步 psycopg2，见"后台任务"）
 - Alembic（数据库迁移）
+- Celery + Redis（后台任务与定时对账）
 - pytest（测试）
 
 ## 快速开始
 
 ```bash
-# 1. 启动本地 PostgreSQL 与 SILO 对象存储
+# 1. 启动本地 PostgreSQL、SILO 与 Redis
 docker compose up -d
 
 # 2. 安装依赖
@@ -195,6 +196,49 @@ async def create_item(session: DbSession) -> dict:
 - Service 负责组织同一事务内的业务操作，但不持有全局 Session。
 - 不得把请求 Session 传给后台任务；Worker 或后台任务必须创建自己的 Session 和事务。
 - 需要独立事务时显式创建新 Session，不要在同一个请求 Session 中嵌套提交。
+
+## 后台任务（Celery + Redis）
+
+耗时操作（文档解析等）不在请求进程内执行：API 原子认领状态后入队，独立 worker 执行，DB 状态列（`parse_status` 等）是 async 与 sync 世界的唯一契约。
+
+### 执行模型
+
+```
+FastAPI(async)                   契约=DB                 Celery worker(sync)
+请求→原子认领 PARSING ────────────────────────────► submit 任务: MinIO下载+提交docling+存task_id
+  ↑                                                    reconcile 任务(beat 每5s):
+  └── 返回 202 / parse_status                          扫PARSING→并行poll各版本→终态落库
+```
+
+- API 用 asyncpg；worker 内 DB 访问用**同步 psycopg2**（连接无事件循环绑定，无需任何跨循环处理）
+- docling 官方只有 async 客户端，在任务内以 `asyncio.run()` 薄桥包裹（客户端自包含，无跨循环共享状态）
+- 失败即标 `FAILED` 落 `parse_error`；卡住版本由 beat 对账兜底（超时/任务丢失 → FAILED，提示重新触发）
+
+### 启动
+
+```bash
+# Redis（docker compose up -d 已含）
+docker compose up -d redis
+
+# dev:worker + beat 单进程(脚本封装,可用 CELERY_CONCURRENCY/CELERY_LOGLEVEL 覆盖)
+./scripts/celery_dev.sh
+
+# 等价的手工命令(生产建议 beat 与 worker 同 supervisor 托管)
+uv run celery -A app.core.celery_app worker -Q parsing --concurrency=2 --loglevel=INFO
+uv run celery -A app.core.celery_app beat --loglevel=INFO
+```
+
+> ⚠️ beat 挂了会导致解析永久停在 `parsing` 状态（无人判超时），必须与 worker 同生命周期托管。
+> 队列名 `parsing` 在 `app/core/celery_app.py` 的 `task_routes` 配置；未来 Review Run 长任务走独立 `review` 队列。
+
+调度与运维配置（`app/core/celery_app.py`）：时区 `Asia/Shanghai`（cron 直接写北京时间）、`worker_max_tasks_per_child=100`（防内存泄漏）、并发与对账间隔由 settings 控制。beat 表独立维护，可仿照"按 `settings.environment` 条件增删条目"的管理方式。
+
+### 新增任务
+
+1. `app/tasks/` 下新建模块（如 `app/tasks/review.py`），写 `@celery_app.task(name="xxx.yyy", acks_late=True, max_retries=0)`
+2. 任务体保持薄包装，业务逻辑放 `app/services/`（worker 内用 `sync_session_factory`）
+3. 任务模块会被**自动收集**（`app/core/celery_app.py` 启动时扫描 `app/tasks/` 下所有模块导入注册），无需改任何注册配置
+4. 测试用 eager 模式（`celery_app.conf.task_always_eager = True`）直接调 `.delay()`，见 `tests/services/test_parsing_tasks.py`
 
 ## 测试
 
