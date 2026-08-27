@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +35,10 @@ class Settings(BaseSettings):
     worker_max_tasks_per_child: int = 100
     parsing_poll_interval_seconds: int = 5
     parsing_reconcile_limit: int = 50
+    llm_base_url: str = "https://api.example.com/v1"
+    llm_api_key: SecretStr = SecretStr("")
+    llm_model: str = "configure-me"
+    llm_context_length_limit: int = 128_000
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

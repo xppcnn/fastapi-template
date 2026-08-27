@@ -97,3 +97,30 @@ def test_sync_database_url_derived_from_async(monkeypatch) -> None:
         )
     finally:
         get_settings.cache_clear()
+
+
+def test_llm_settings_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_CONTEXT_LENGTH_LIMIT", raising=False)
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_base_url == "https://api.example.com/v1"
+    assert settings.llm_api_key.get_secret_value() == ""
+    assert settings.llm_model == "configure-me"
+    assert settings.llm_context_length_limit == 128_000
+
+
+def test_llm_settings_env_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5:7b")
+    monkeypatch.setenv("LLM_CONTEXT_LENGTH_LIMIT", "65536")
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert settings.llm_base_url == "http://localhost:11434/v1"
+        assert settings.llm_model == "qwen2.5:7b"
+        assert settings.llm_context_length_limit == 65536
+    finally:
+        get_settings.cache_clear()

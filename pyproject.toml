@@ -12,6 +12,7 @@ dependencies = [
     "email-validator>=2.2",
     "fastapi[standard]>=0.141.1",
     "minio>=7.2.20",
+    "openai>=2.0.0",
     "psycopg[binary]>=3.3.4",
     "pwdlib[argon2]>=0.3",
     "pydantic-settings>=2.14.2",

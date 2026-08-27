@@ -8,18 +8,43 @@ from app.models.document import (
     UploadSessionStatus,
 )
 from app.models.identity import Membership, Organization, User
+from app.models.model_run import ModelRun, ModelRunStatus
 from app.models.project import Project, ProjectStatus
+from app.models.review_rule import (
+    EvaluationMethod,
+    ReviewRule,
+    RuleStatus,
+    RuleType,
+    ScoringMethod,
+)
+from app.models.rule_extraction import (
+    RuleExtractBatch,
+    RuleExtractBatchStatus,
+    RuleExtractionRun,
+    RuleExtractionRunStatus,
+)
 
 __all__ = [
     "Base",
     "DocType",
     "Document",
     "DocumentVersion",
+    "EvaluationMethod",
     "Membership",
+    "ModelRun",
+    "ModelRunStatus",
     "Organization",
     "ParseStatus",
     "Project",
     "ProjectStatus",
+    "ReviewRule",
+    "RuleExtractBatch",
+    "RuleExtractBatchStatus",
+    "RuleExtractionRun",
+    "RuleExtractionRunStatus",
+    "RuleStatus",
+    "RuleType",
+    "ScoringMethod",
     "UploadSession",
     "UploadSessionStatus",
     "User",

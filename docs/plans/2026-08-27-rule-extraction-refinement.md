@@ -4,6 +4,8 @@
 范围：Task 8（模型适配器、运行记录与审核规则提取）的细化增量
 基础：《design §7.2 规则提取》、Task 8 Step 1-6
 
+> **状态：已完成**（2026-08-27 实施，tests/llm + tests/rules 全绿、无网络访问；含跨段去重、越界待确认、失败批次重跑、稳定前缀回归测试；迁移 upgrade/downgrade 与 alembic check 均通过）
+
 ## 背景
 
 FastAPI 后端的规则提取应在保持「结构化 Schema + 片段 UUID 引用 + 人工确认门槛 +

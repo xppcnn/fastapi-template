@@ -30,9 +30,10 @@ celery_app.conf.update(
     timezone="Asia/Shanghai",
     task_default_queue="parsing",
     task_routes={
-        # 预留:未来 Review Run 长任务走独立 review 队列,避免抢占 reconcile 槽位
         "parsing.submit": {"queue": "parsing"},
         "parsing.reconcile": {"queue": "parsing"},
+        # 规则提取/逐项审核/评分共用:LLM 密集队列,与 CPU 密集的 parsing 分离
+        "rule_extraction.submit": {"queue": "review"},
     },
     beat_schedule=_beat_schedule,
     worker_concurrency=settings.celery_concurrency,
