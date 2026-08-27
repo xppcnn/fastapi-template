@@ -84,6 +84,11 @@ ModelRun（沿用现有 plan 的 `prompt_version` 字段），缓存结构变更
 | `app/schemas/review_rule.py` | 评分项新增 `evaluation_criterion`（扣分判定口径）字段 |
 | `app/integrations/llm/openai_compatible.py` | 确认支持 `context_length_limit` 供切分/缓存策略 |
 | `tests/rules/test_rule_extraction.py` | 新增：merge 铁律、跨段去重、越界产物待确认、稳定前缀测试 |
+| `app/tasks/rule_extraction.py` | 新增：Celery 薄包装（`review` 队列），逻辑在 `workflows/extract_rules.py` |
+| `app/core/celery_app.py` | `task_routes` 增加 `review` 队列（LLM 密集，与 `parsing` 分离） |
+| `app/core/config.py` + `.env.example` | 新增 LLM 配置：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_CONTEXT_LENGTH_LIMIT` |
+| `app/api/v1/endpoints/review_rules.py` | `POST /rules/extract` 原子认领后入队返回 **202 + job_id**，进度走 `GET /jobs/{job_id}` 轮询（**不做 SSE**） |
+| `alembic/versions/..._rule_extract_batches.py` | 新增：规则提取批次/进度追踪（按批 checkpoint，失败批次单独重跑；`model_run` 的 attempt 链承接重试语义） |
 
 ## 决策记录：Strands Agents 使用边界与试点（2026-08-27）
 
@@ -153,6 +158,20 @@ ModelRun（沿用现有 plan 的 `prompt_version` 字段），缓存结构变更
   微调措辞升版即可，继续吃缓存靠"开头不变"的纪律。
 - 回归测试守则：四类规则 messages 前两条（system + 招标全文）必须逐字节相同，
   守护稳定前缀（prompt cache 优化）不被破坏。
+
+## 决策记录：后台化与进度暴露（2026-08-27）
+
+- 规则提取走 **Celery**（`app/tasks/rule_extraction.py`），与解析链路同构：
+  API 原子认领状态后入队、DB 状态列是 async 与 sync 世界的唯一契约、失败批次
+  单独重跑、卡住兜底沿用 worker 侧对账思路。
+- **独立 `review` 队列**：与 `parsing`（CPU 密集 docling）分离，`review` 为 LLM 密集
+  队列（规则提取/逐项审核/评分共用），concurrency 按模型限流调整。
+- **不做 SSE**：MVP 进度 = `202 + GET /jobs/{job_id}` 轮询（总批数/完成批/失败批/状态）。
+  规则提取进度粒度粗（每章一批，10-60s/批），轮询 3-5s 体验相同；SSE 需跨进程
+  事件推送（worker → FastAPI），引入连接生命周期/断线恢复成本。SSE 留到
+  Task 10 逐项审核（每条 finding 实时推送有价值）再评估。
+- 测试用 eager 模式（`task_always_eager = True` 直接 `.delay()`），保持无网络
+  （沿用 `tests/services/test_parsing_tasks.py` 套路）。
 
 ## 验收
 
