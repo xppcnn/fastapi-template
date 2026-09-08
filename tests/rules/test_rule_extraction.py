@@ -434,6 +434,9 @@ def test_workflow_failed_batch_retry_reruns_only_failed(session_factory) -> None
     # 重跑仅处理失败批次;成功批次不再重复提取
     retry_outcomes = _batch1_outcomes(ids)  # 4 类齐全
     fake2 = FakeLLMClient(outcomes=retry_outcomes)
+    with session_factory() as session:
+        session.get(RuleExtractionRun, run_id).status = RuleExtractionRunStatus.QUEUED
+        session.commit()
     _run_with_fake(session_factory, run_id, fake2)
 
     with session_factory() as session:
@@ -457,3 +460,131 @@ def test_workflow_failed_batch_retry_reruns_only_failed(session_factory) -> None
         ]
         assert len(retried) == 1
         assert retried[0].attempt == 4
+
+
+def test_duplicate_running_delivery_does_not_call_model(session_factory):
+    run_id, _, _ = _seed_tender(session_factory)
+    with session_factory() as session:
+        run = session.get(RuleExtractionRun, run_id)
+        run.status = RuleExtractionRunStatus.RUNNING
+        session.commit()
+    fake = FakeLLMClient()
+    _run_with_fake(session_factory, run_id, fake)
+    assert fake.calls == []
+
+
+def test_batch_checkpoint_is_visible_before_other_batches_finish(session_factory):
+    run_id, ids, _ = _seed_tender(session_factory)
+
+    class ObservingFake(FakeLLMClient):
+        async def structured(self, **kwargs):
+            if kwargs["operation"].endswith(":1:disqualification"):
+                with session_factory() as session:
+                    run = session.get(RuleExtractionRun, run_id)
+                    assert run.completed_batches == 1, "成功批次应立即持久化"
+            return await super().structured(**kwargs)
+
+    fake = ObservingFake(outcomes=_batch0_outcomes(ids) + _batch1_outcomes(ids))
+    _run_with_fake(session_factory, run_id, fake)
+    with session_factory() as session:
+        assert (
+            session.get(RuleExtractionRun, run_id).status
+            == RuleExtractionRunStatus.SUCCEEDED
+        )
+
+
+def test_worker_setup_failure_marks_run_failed(session_factory):
+    run_id, _, _ = _seed_tender(session_factory)
+    with (
+        patch("app.workflows.extract_rules.sync_session_factory", session_factory),
+        patch(
+            "app.workflows.extract_rules.get_llm_client",
+            side_effect=RuntimeError("private connection"),
+        ),
+    ):
+        run_rule_extraction(run_id)
+    with session_factory() as session:
+        run = session.get(RuleExtractionRun, run_id)
+        assert run.status == RuleExtractionRunStatus.FAILED
+        assert "private" not in run.error_message
+
+
+def test_timeout_and_old_delivery_cannot_overwrite_retry(session_factory):
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from app.core.object_storage import utcnow_naive
+    from app.workflows.extract_rules import reconcile_rule_extractions
+
+    run_id, _, _ = _seed_tender(session_factory)
+    with session_factory() as session:
+        run = session.get(RuleExtractionRun, run_id)
+        old_token = run.execution_token
+        run.status = RuleExtractionRunStatus.RUNNING
+        run.started_at = utcnow_naive() - timedelta(days=1)
+        session.commit()
+    with patch("app.workflows.extract_rules.sync_session_factory", session_factory):
+        assert reconcile_rule_extractions() == 1
+    with session_factory() as session:
+        run = session.get(RuleExtractionRun, run_id)
+        assert run.status == RuleExtractionRunStatus.FAILED
+        assert run.finished_at is not None
+        run.status = RuleExtractionRunStatus.QUEUED
+        run.execution_token = str(uuid4())
+        session.commit()
+    with (
+        patch("app.workflows.extract_rules.sync_session_factory", session_factory),
+        patch("app.workflows.extract_rules.get_llm_client") as llm,
+    ):
+        run_rule_extraction(run_id, old_token)
+        llm.assert_not_called()
+    with session_factory() as session:
+        assert (
+            session.get(RuleExtractionRun, run_id).status
+            == RuleExtractionRunStatus.QUEUED
+        )
+
+
+def test_late_batch_is_discarded_after_timeout(session_factory):
+    from datetime import timedelta
+
+    from app.core.object_storage import utcnow_naive
+    from app.workflows.extract_rules import reconcile_rule_extractions
+
+    run_id, ids, _ = _seed_tender(session_factory)
+
+    class TimedOutFake(FakeLLMClient):
+        async def structured(self, **kwargs):
+            result = await super().structured(**kwargs)
+            with session_factory() as session:
+                run = session.get(RuleExtractionRun, run_id)
+                run.started_at = utcnow_naive() - timedelta(days=1)
+                session.commit()
+            reconcile_rule_extractions()
+            return result
+
+    fake = TimedOutFake(outcomes=_batch0_outcomes(ids) + _batch1_outcomes(ids))
+    _run_with_fake(session_factory, run_id, fake)
+    with session_factory() as session:
+        assert (
+            session.get(RuleExtractionRun, run_id).status
+            == RuleExtractionRunStatus.FAILED
+        )
+        assert list(session.scalars(select(ReviewRule))) == []
+
+
+def test_queued_timeout_does_not_expire_recent_run(session_factory):
+    from datetime import timedelta
+
+    from app.core.object_storage import utcnow_naive
+    from app.workflows.extract_rules import reconcile_rule_extractions
+
+    run_id, _, _ = _seed_tender(session_factory)
+    with patch("app.workflows.extract_rules.sync_session_factory", session_factory):
+        assert reconcile_rule_extractions() == 0
+        with session_factory() as session:
+            session.get(RuleExtractionRun, run_id).updated_at = (
+                utcnow_naive() - timedelta(days=1)
+            )
+            session.commit()
+        assert reconcile_rule_extractions() == 1

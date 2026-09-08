@@ -20,6 +20,7 @@ from app.schemas.llm import Condition
 class RuleListQuery(BaseModel):
     page: Annotated[int, Query(ge=1)] = 1
     page_size: Annotated[int, Query(ge=1, le=100)] = 20
+    tender_version_id: UUID | None = None
     rule_type: RuleType | None = None
     status: RuleStatus | None = None
 
@@ -54,7 +55,7 @@ class RuleUpdateRequest(BaseModel):
 
 
 class RuleConfirmRequest(BaseModel):
-    rule_ids: list[UUID] | None = None
+    rule_ids: list[UUID] | None = Field(default=None, min_length=1)
 
 
 class ReviewRuleResponse(BaseModel):

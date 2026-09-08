@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from uuid import uuid4
 
 from sqlalchemy import (
     DateTime,
@@ -65,6 +66,9 @@ class RuleExtractionRun(Base):
     total_batches: Mapped[int] = mapped_column(Integer, nullable=False)
     completed_batches: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     failed_batches: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    execution_token: Mapped[str] = mapped_column(
+        String(36), default=lambda: str(uuid4()), nullable=False
+    )
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

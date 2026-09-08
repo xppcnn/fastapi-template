@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     worker_max_tasks_per_child: int = 100
     parsing_poll_interval_seconds: int = 5
     parsing_reconcile_limit: int = 50
+    rule_extraction_timeout_minutes: int = Field(default=30, ge=1)
+    rule_extraction_queue_timeout_minutes: int = Field(default=5, ge=1)
+    rule_extraction_reconcile_interval_seconds: int = Field(default=30, ge=1)
     llm_base_url: str = "https://api.example.com/v1"
     llm_api_key: SecretStr = SecretStr("")
     llm_model: str = "configure-me"

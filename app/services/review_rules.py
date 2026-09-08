@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError
+from app.core.object_storage import utcnow_naive
 from app.models.document import (
     DocType,
     Document,
@@ -143,6 +144,44 @@ async def _tender_version(
     return version
 
 
+def _active_tender_ids(project_id: int):
+    return select(Document.active_version_id).where(
+        Document.project_id == project_id,
+        Document.doc_type == DocType.TENDER,
+        Document.is_deleted.is_(False),
+    )
+
+
+async def _require_active_version(
+    session: AsyncSession, *, project_id: int, version_id: int
+) -> None:
+    document = await session.scalar(
+        select(Document)
+        .where(
+            Document.project_id == project_id,
+            Document.doc_type == DocType.TENDER,
+            Document.is_deleted.is_(False),
+            Document.active_version_id == version_id,
+        )
+        .with_for_update()
+    )
+    if document is None:
+        raise AppError("招标版本已失效，请使用当前活动版本", code=409)
+
+
+async def _require_editable_rule(session: AsyncSession, rule: ReviewRule) -> None:
+    await _require_active_version(
+        session, project_id=rule.project_id, version_id=rule.tender_version_id
+    )
+    await session.refresh(rule, with_for_update=True)
+    if rule.status != RuleStatus.DRAFT:
+        raise AppError("只有草稿规则可以修改或确认", code=409)
+    if rule.extraction_run_id is not None:
+        run = await session.get(RuleExtractionRun, rule.extraction_run_id)
+        if run is None or run.status != RuleExtractionRunStatus.SUCCEEDED:
+            raise AppError("请先完成规则提取或重试失败批次", code=409)
+
+
 async def list_rules(
     session: AsyncSession,
     *,
@@ -157,6 +196,15 @@ async def list_rules(
         ReviewRule.project_id == project.id,
         ReviewRule.organization_id == organization_id,
     )
+    if query.tender_version_id is not None:
+        version = await _tender_version(
+            session, project_id=project.id, version_public_id=query.tender_version_id
+        )
+        stmt = stmt.where(ReviewRule.tender_version_id == version.id)
+    else:
+        stmt = stmt.where(
+            ReviewRule.tender_version_id.in_(_active_tender_ids(project.id))
+        )
     if query.rule_type is not None:
         stmt = stmt.where(ReviewRule.rule_type == query.rule_type)
     if query.status is not None:
@@ -194,11 +242,13 @@ async def create_manual_rule(
         session, organization_id=organization_id, project_public_id=project_public_id
     )
     tender_doc = await session.scalar(
-        select(Document).where(
+        select(Document)
+        .where(
             Document.project_id == project.id,
             Document.doc_type == DocType.TENDER,
             Document.is_deleted.is_(False),
         )
+        .with_for_update()
     )
     version_id = tender_doc.active_version_id if tender_doc else None
     if version_id is None:
@@ -251,17 +301,18 @@ async def update_rule(
         organization_id=organization_id,
         rule_public_id=rule_public_id,
     )
+    await _require_editable_rule(session, rule)
     if rule.status != RuleStatus.DRAFT:
         raise AppError("只有草稿规则可以修改", code=409)
     if rule.version != payload.version:
         raise AppError("版本冲突,请刷新后重试", code=409)
-    for field, value in payload.model_dump(exclude={"version"}).items():
-        if value is None:
-            continue
-        if field == "condition":
-            rule.condition = value.model_dump(mode="json")
-        else:
-            setattr(rule, field, value)
+    nullable = {"condition", "max_score", "evaluation_criterion"}
+    for field, value in payload.model_dump(
+        exclude={"version"}, exclude_unset=True, mode="json"
+    ).items():
+        if value is None and field not in nullable:
+            raise AppError(f"{field} 不能为空", code=422)
+        setattr(rule, field, value)
     rule.dedup_key = rule_dedup_key(rule)
     rule.version += 1
     await session.flush()
@@ -285,6 +336,7 @@ async def ignore_rule(
         organization_id=organization_id,
         rule_public_id=rule_public_id,
     )
+    await _require_editable_rule(session, rule)
     if rule.status != RuleStatus.DRAFT:
         raise AppError("只有草稿规则可以忽略", code=409)
     rule.status = RuleStatus.IGNORED
@@ -309,6 +361,7 @@ async def confirm_rules(
         ReviewRule.project_id == project.id,
         ReviewRule.organization_id == organization_id,
         ReviewRule.status == RuleStatus.DRAFT,
+        ReviewRule.tender_version_id.in_(_active_tender_ids(project.id)),
     )
     if payload.rule_ids:
         stmt = stmt.where(ReviewRule.public_id.in_(payload.rule_ids))
@@ -316,6 +369,7 @@ async def confirm_rules(
     if payload.rule_ids and len(rows) != len({str(i) for i in payload.rule_ids}):
         raise AppError("部分规则不存在或已确认", code=409)
     for row in rows:
+        await _require_editable_rule(session, row)
         row.status = RuleStatus.CONFIRMED
         row.version += 1
     await session.flush()
@@ -328,6 +382,7 @@ async def confirm_rules(
             ReviewRule.project_id == project.id,
             ReviewRule.organization_id == organization_id,
             ReviewRule.status == RuleStatus.DRAFT,
+            ReviewRule.tender_version_id.in_(_active_tender_ids(project.id)),
         )
     )
     return ConfirmResponse(confirmed=len(rows), pending=pending or 0)
@@ -369,6 +424,7 @@ async def start_rule_extraction(
     version = await _tender_version(
         session, project_id=project.id, version_public_id=tender_version_public_id
     )
+    await _require_active_version(session, project_id=project.id, version_id=version.id)
     running = await session.scalar(
         select(RuleExtractionRun).where(
             RuleExtractionRun.project_id == project.id,
@@ -390,7 +446,9 @@ async def start_rule_extraction(
             )
         ).scalars()
     )
-    total_batches = max(1, len(group_into_batches(blocks)))
+    if not blocks:
+        raise AppError("招标版本没有可提取的文本", code=400)
+    total_batches = len(group_into_batches(blocks))
 
     run = RuleExtractionRun(
         organization_id=organization_id,
@@ -405,9 +463,7 @@ async def start_rule_extraction(
     await session.flush()
     await session.commit()
 
-    from app.tasks.rule_extraction import rule_extraction_submit
-
-    rule_extraction_submit.delay(run.id)
+    await _enqueue_extraction(session, run)
     return run
 
 
@@ -425,14 +481,53 @@ async def retry_extraction_run(
         project_public_id=project_public_id,
         run_public_id=run_public_id,
     )
+    await _require_active_version(
+        session, project_id=run.project_id, version_id=run.tender_version_id
+    )
+    await session.refresh(run, with_for_update=True)
     if run.status not in _TERMINAL_RUN_STATUSES:
         raise AppError("当前状态不允许重试提取", code=409)
+    other = await session.scalar(
+        select(RuleExtractionRun.id).where(
+            RuleExtractionRun.tender_version_id == run.tender_version_id,
+            RuleExtractionRun.id != run.id,
+            RuleExtractionRun.status.in_(_RUNNING_RUN_STATUSES),
+        )
+    )
+    if other is not None:
+        raise AppError("该招标版本正在提取规则", code=409)
     run.status = RuleExtractionRunStatus.QUEUED
+    run.execution_token = str(uuid4())
+    run.updated_at = utcnow_naive()
+    run.started_at = None
+    run.error_message = None
     run.finished_at = None
     await session.flush()
     await session.commit()
 
+    await _enqueue_extraction(session, run)
+    return run
+
+
+async def _enqueue_extraction(session: AsyncSession, run: RuleExtractionRun) -> None:
     from app.tasks.rule_extraction import rule_extraction_submit
 
-    rule_extraction_submit.delay(run.id)
-    return run
+    try:
+        rule_extraction_submit.delay(run.id, run.execution_token)
+    except Exception as exc:
+        # 即使 broker 接收消息后连接断开，条件更新也不会覆盖已经被 worker 认领的运行。
+        await session.execute(
+            update(RuleExtractionRun)
+            .where(
+                RuleExtractionRun.id == run.id,
+                RuleExtractionRun.execution_token == run.execution_token,
+                RuleExtractionRun.status == RuleExtractionRunStatus.QUEUED,
+            )
+            .values(
+                status=RuleExtractionRunStatus.FAILED,
+                finished_at=utcnow_naive(),
+                error_message="规则提取入队失败，请稍后重试",
+            )
+        )
+        await session.commit()
+        raise AppError("规则提取暂时不可用，请查询任务状态后重试", code=503) from exc

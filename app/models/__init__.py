@@ -10,6 +10,7 @@ from app.models.document import (
 from app.models.identity import Membership, Organization, User
 from app.models.model_run import ModelRun, ModelRunStatus
 from app.models.project import Project, ProjectStatus
+from app.models.review import ReviewRun, ReviewRunRule, ReviewRunStatus
 from app.models.review_rule import (
     EvaluationMethod,
     ReviewRule,
@@ -38,6 +39,9 @@ __all__ = [
     "Project",
     "ProjectStatus",
     "ReviewRule",
+    "ReviewRun",
+    "ReviewRunRule",
+    "ReviewRunStatus",
     "RuleExtractBatch",
     "RuleExtractBatchStatus",
     "RuleExtractionRun",

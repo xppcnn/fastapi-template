@@ -10,6 +10,10 @@ settings = get_settings()
 # beat 调度表独立维护,便于按环境增删条目(参考:环境条件定时任务管理风格)。
 # 示例:if settings.environment == "production": _beat_schedule["xxx"] = {...}
 _beat_schedule = {
+    "rule-extraction-reconcile": {
+        "task": "rule_extraction.reconcile",
+        "schedule": settings.rule_extraction_reconcile_interval_seconds,
+    },
     "parsing-reconcile": {
         "task": "parsing.reconcile",
         "schedule": settings.parsing_poll_interval_seconds,
@@ -34,6 +38,7 @@ celery_app.conf.update(
         "parsing.reconcile": {"queue": "parsing"},
         # 规则提取/逐项审核/评分共用:LLM 密集队列,与 CPU 密集的 parsing 分离
         "rule_extraction.submit": {"queue": "review"},
+        "rule_extraction.reconcile": {"queue": "parsing"},
     },
     beat_schedule=_beat_schedule,
     worker_concurrency=settings.celery_concurrency,

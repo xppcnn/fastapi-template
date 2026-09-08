@@ -171,31 +171,14 @@ def downgrade() -> None:
 
 ## 数据库事务规范
 
-请求处理使用 `app.core.database.DbSession` 注入 Session：
+请求处理使用 `app.core.database.DbSession` 注入 Session。当前实现由 `get_db`
+在请求成功结束时统一提交，异常时回滚；认证依赖与 Service 共享同一个 Session。
 
-```python
-from app.core.database import DbSession
-
-
-async def create_item(session: DbSession) -> dict:
-    try:
-        async with session.begin():
-            item = Item(...)
-            await create_item_repo(session, item=item)
-            return {"id": item.id}
-    except IntegrityError as exc:
-        raise AppError("Item already exists", code=409) from exc
-```
-
-统一规则：
-
-- 一个请求共享一个 Session；请求依赖 `get_db` 只负责打开和关闭 Session，不再自动提交。
-- Service 的写路径用 `async with session.begin():` 包裹整个工作单元（含业务读取），正常退出自动 `commit()`，异常自动 `rollback()`；只读服务无需 begin。
-- `session.begin()` 必须是该 Session 的首次语句——Session 首次执行语句会自动开启事务（autobegin），之后再 `begin()` 会抛 `InvalidRequestError`。因此不要在依赖中先读库再在 Service 中 begin；写接口的身份校验应在 begin 块内完成（或依赖先显式结束只读事务）。
-- Repository 可以执行查询、`add()` 和 `flush()`，不得调用 `commit()` 或 `rollback()`。
-- Service 负责组织同一事务内的业务操作，但不持有全局 Session。
-- 不得把请求 Session 传给后台任务；Worker 或后台任务必须创建自己的 Session 和事务。
-- 需要独立事务时显式创建新 Session，不要在同一个请求 Session 中嵌套提交。
+- Service / Repository 的普通写路径使用 `add()`、`flush()`，不另起 `session.begin()`；认证查询已触发 autobegin。
+- 必须先提交再入队的后台任务接口显式提交任务记录。入队失败时另行持久化失败状态，再返回服务不可用；客户端可查询并重试。
+- Worker 创建独立的同步 Session，不接收请求 Session。
+- 文档与规则变更、审核快照通过行锁串行化相关输入。规则修改还校验客户端版本号。
+- Repository 不负责提交或回滚；若未来改用 Service 显式事务，需要一起调整认证依赖和数据库依赖，不能混用两套约定。
 
 ## 后台任务（Celery + Redis）
 
@@ -225,11 +208,12 @@ docker compose up -d redis
 
 # 等价的手工命令(生产建议 beat 与 worker 同 supervisor 托管)
 uv run celery -A app.core.celery_app worker -Q parsing --concurrency=2 --loglevel=INFO
+uv run celery -A app.core.celery_app worker -Q review --concurrency=2 --loglevel=INFO
 uv run celery -A app.core.celery_app beat --loglevel=INFO
 ```
 
 > ⚠️ beat 挂了会导致解析永久停在 `parsing` 状态（无人判超时），必须与 worker 同生命周期托管。
-> 队列名 `parsing` 在 `app/core/celery_app.py` 的 `task_routes` 配置；未来 Review Run 长任务走独立 `review` 队列。
+> 队列名 `parsing` 在 `app/core/celery_app.py` 的 `task_routes` 配置；规则提取已使用独立 `review` 队列。开发脚本同时消费 `parsing,review`，生产可按上面的命令分别启动 worker。
 
 调度与运维配置（`app/core/celery_app.py`）：时区 `Asia/Shanghai`（cron 直接写北京时间）、`worker_max_tasks_per_child=100`（防内存泄漏）、并发与对账间隔由 settings 控制。beat 表独立维护，可仿照"按 `settings.environment` 条件增删条目"的管理方式。
 
@@ -239,6 +223,54 @@ uv run celery -A app.core.celery_app beat --loglevel=INFO
 2. 任务体保持薄包装，业务逻辑放 `app/services/`（worker 内用 `sync_session_factory`）
 3. 任务模块会被**自动收集**（`app/core/celery_app.py` 启动时扫描 `app/tasks/` 下所有模块导入注册），无需改任何注册配置
 4. 测试用 eager 模式（`celery_app.conf.task_always_eager = True`）直接调 `.delay()`，见 `tests/services/test_parsing_tasks.py`
+
+## 规则版本与提取恢复
+
+- `GET /api/v1/projects/{project_id}/rules` 默认只返回活动招标版本规则；用 `tender_version_id=<UUID>` 只读查询历史版本。
+- 换版后旧规则保留，但不能编辑、忽略、确认或重新提取；历史版本的失败提取也不能重试。
+- `POST .../rules/confirm` 的 `{}` 表示确认当前版本全部草稿；显式 `rule_ids: []` 返回 422。
+- 提取产生的草稿必须等所属提取运行成功后才能编辑或确认，部分失败时先重试失败批次。
+- 进度仍使用实际接口 `GET .../rules/extract/{run_id}`，重试使用 `POST .../rules/extract/{run_id}/retry`，尚未引入通用 `/jobs`。
+- 每批完成即保存规则和进度。数据库原子认领运行；重复投递不重复执行，重试更换执行令牌，旧 worker 的迟到结果不会覆盖当前运行。
+- 入队失败返回 503，并保存可查询的失败记录。beat 在 `parsing` 队列执行规则提取对账；默认排队超过 5 分钟、执行超过 30 分钟标记失败，用户重试时保留成功批次。
+- 时限是运行的总时限，不是无进展时间。大文档可调整 `.env.example` 中三个 `RULE_EXTRACTION_*` 配置；beat 和 parsing worker 必须持续运行。
+
+## 审核运行输入与证据基线
+
+本阶段创建状态为 `ready` 的审核运行：表示输入已冻结，尚未启动逐项审核。
+
+| 接口 | 功能 |
+|---|---|
+| `POST /api/v1/projects/{project_id}/reviews` | 固定招投标版本和已确认规则快照 |
+| `GET /api/v1/projects/{project_id}/reviews` | 分页查询运行列表 |
+| `GET /api/v1/projects/{project_id}/reviews/{run_id}` | 查询版本、快照哈希和运行规则 |
+| `GET /api/v1/projects/{project_id}/reviews/{run_id}/rules/{rule_id}/evidence` | 检索本次投标版本的候选原文，`limit` 为 1–50 |
+
+创建请求示例（UUID 替换为实际版本公开 ID）：
+
+```json
+{
+  "tender_version_id": "11111111-1111-1111-1111-111111111111",
+  "bid_version_id": "22222222-2222-2222-2222-222222222222"
+}
+```
+
+创建时两个版本必须属于当前项目、类型正确、处于活动状态且解析完成并有文本；
+规则提取不能仍在排队或执行，全部草稿须先确认或忽略，至少保留一条确认规则。
+可传 `Idempotency-Key`（1–64 字符）：同键同输入返回原运行，同键不同输入返回 409。
+省略幂等键会创建新运行。规则快照和版本在后续换版后保持不变。
+
+证据接口的 `rule_id` 是运行详情 `rules[].public_id`，不是项目原始规则 ID。
+当前检索为中文二元词与英文词的 BM25 基线 `keyword-v1`；`score` 仅用于候选排序，
+不表示符合性或置信度。没有命中返回空列表；未知页码保留 `null`，不生成页码。
+删除输入文档后禁止访问运行详情和证据。尚未实现向量召回、逐项审核、评分、复核和报告。
+
+### 本次升级
+
+新增迁移到 `b8e091080002`。先停止旧版本 worker 和 beat，再运行 `uv run alembic upgrade head`，
+随后一起启动新版 API、worker、beat。旧队列中的提取消息只有一个参数，与新增执行令牌不兼容；
+停止旧 worker 后应让过期运行经对账进入失败，再通过重试接口发布新格式消息。
+不要在有旧 worker 执行时滚动切换。迁移不会修改已有文件或规则内容。
 
 ## 测试
 

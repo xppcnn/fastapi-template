@@ -53,7 +53,10 @@ def env() -> Generator[tuple[TestClient, async_sessionmaker], None, None]:
     asyncio.run(create_schema())
     app.dependency_overrides[get_db] = override_db
     try:
-        with TestClient(app, base_url="https://testserver") as test_client:
+        with (
+            patch("app.main.parsing_reconcile.delay"),
+            TestClient(app, base_url="https://testserver") as test_client,
+        ):
             yield test_client, session_factory
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -462,3 +465,207 @@ def test_openapi_rules_extract_uses_api_response(
     ref = content["schema"]["$ref"]
     assert ref.endswith("ApiResponse_RuleExtractionRunResponse_")
     assert "extract/{run_id}/retry" in str(schema["paths"].keys())
+
+
+def _replace_tender(session_factory, old_public_id):
+    async def replace():
+        async with session_factory() as session:
+            old = await session.scalar(
+                select(DocumentVersion).where(
+                    DocumentVersion.public_id == old_public_id
+                )
+            )
+            new = DocumentVersion(
+                document_id=old.document_id,
+                version_number=2,
+                object_key="raw/v2.pdf",
+                file_name="v2.pdf",
+                content_type="application/pdf",
+                size_bytes=1,
+                sha256="1" * 64,
+                parse_status=ParseStatus.PARSED,
+            )
+            session.add(new)
+            await session.flush()
+            doc = await session.get(Document, old.document_id)
+            doc.active_version_id = new.id
+            await session.commit()
+            return new.public_id
+
+    return asyncio.run(replace())
+
+
+def test_old_tender_rules_are_read_only_and_not_bulk_confirmed(env):
+    client, factory = env
+    token, org = _register(client)
+    seeded = _seed_tender(factory, organization_public_id=org)
+    base = f"/api/v1/projects/{seeded['project_id']}/rules"
+    headers = _auth(token)
+    rule = client.post(
+        base,
+        headers=headers,
+        json={
+            "rule_type": "response",
+            "title": "旧要求",
+            "description": "必须提供证书",
+        },
+    ).json()["data"]
+    _replace_tender(factory, seeded["version_id"])
+    assert client.get(base, headers=headers).json()["data"]["total"] == 0
+    assert (
+        client.get(
+            base,
+            headers=headers,
+            params={"tender_version_id": str(seeded["version_id"])},
+        ).json()["data"]["total"]
+        == 1
+    )
+    assert (
+        client.post(base + "/confirm", headers=headers, json={}).json()["data"][
+            "confirmed"
+        ]
+        == 0
+    )
+    assert (
+        client.post(
+            base + "/confirm", headers=headers, json={"rule_ids": [rule["public_id"]]}
+        ).status_code
+        == 409
+    )
+    assert (
+        client.patch(
+            base + "/" + rule["public_id"],
+            headers=headers,
+            json={"title": "修改旧规则", "version": 1},
+        ).status_code
+        == 409
+    )
+    assert (
+        client.post(
+            base + "/" + rule["public_id"] + "/ignore", headers=headers
+        ).status_code
+        == 409
+    )
+    with patch("app.tasks.rule_extraction.rule_extraction_submit") as submit:
+        response = client.post(
+            base + "/extract",
+            headers=headers,
+            json={"tender_version_id": str(seeded["version_id"])},
+        )
+        assert response.status_code == 409
+        submit.delay.assert_not_called()
+
+
+def test_empty_confirmation_ids_do_not_confirm_everything(env):
+    client, factory = env
+    token, org = _register(client)
+    seeded = _seed_tender(factory, organization_public_id=org)
+    base = f"/api/v1/projects/{seeded['project_id']}/rules"
+    headers = _auth(token)
+    client.post(
+        base,
+        headers=headers,
+        json={"rule_type": "response", "title": "要求", "description": "需要证书"},
+    )
+    response = client.post(base + "/confirm", headers=headers, json={"rule_ids": []})
+    assert response.status_code == 422
+    assert (
+        client.get(base, headers=headers).json()["data"]["items"][0]["status"]
+        == "draft"
+    )
+
+
+def test_condition_can_be_updated_and_cleared(env):
+    client, factory = env
+    token, org = _register(client)
+    seeded = _seed_tender(factory, organization_public_id=org)
+    base = f"/api/v1/projects/{seeded['project_id']}/rules"
+    headers = _auth(token)
+    rule = client.post(
+        base,
+        headers=headers,
+        json={"rule_type": "qualification", "title": "证书", "description": "提供证书"},
+    ).json()["data"]
+    url = base + "/" + rule["public_id"]
+    response = client.patch(
+        url,
+        headers=headers,
+        json={"version": 1, "condition": {"operator": "exists", "field": "证书"}},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["condition"]["field"] == "证书"
+    response = client.patch(
+        url, headers=headers, json={"version": 2, "condition": None}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["condition"] is None
+
+
+def test_enqueue_failure_is_persisted_and_retryable(env):
+    from app.models.rule_extraction import RuleExtractionRun
+
+    client, factory = env
+    token, org = _register(client)
+    seeded = _seed_tender(factory, organization_public_id=org)
+    base = f"/api/v1/projects/{seeded['project_id']}/rules/extract"
+    with patch(
+        "app.tasks.rule_extraction.rule_extraction_submit.delay",
+        side_effect=RuntimeError("secret connection info"),
+    ):
+        response = client.post(
+            base,
+            headers=_auth(token),
+            json={"tender_version_id": str(seeded["version_id"])},
+        )
+    assert response.status_code == 503
+    assert "secret" not in response.text
+
+    async def read():
+        async with factory() as session:
+            return await session.scalar(select(RuleExtractionRun))
+
+    run = asyncio.run(read())
+    assert run.status == RuleExtractionRunStatus.FAILED
+    assert run.finished_at is not None
+    old_token = run.execution_token
+    with patch("app.tasks.rule_extraction.rule_extraction_submit.delay") as submit:
+        response = client.post(base + f"/{run.public_id}/retry", headers=_auth(token))
+    assert response.status_code == 200
+    assert asyncio.run(read()).execution_token != old_token
+    assert len(submit.call_args.args) == 2
+
+
+def test_failed_extraction_cannot_confirm_partial_rules(env):
+    from app.models.review_rule import ReviewRule
+
+    client, factory = env
+    token, org = _register(client)
+    seeded = _seed_tender(factory, organization_public_id=org)
+    base = f"/api/v1/projects/{seeded['project_id']}/rules"
+    rule_id = client.post(
+        base,
+        headers=_auth(token),
+        json={"rule_type": "response", "title": "要求", "description": "需要证书"},
+    ).json()["data"]["public_id"]
+
+    async def mark():
+        async with factory() as session:
+            rule = await session.scalar(
+                select(ReviewRule).where(ReviewRule.public_id == UUID(rule_id))
+            )
+            run = RuleExtractionRun(
+                organization_id=rule.organization_id,
+                project_id=rule.project_id,
+                tender_version_id=rule.tender_version_id,
+                status=RuleExtractionRunStatus.PARTIAL,
+                total_batches=2,
+            )
+            session.add(run)
+            await session.flush()
+            rule.extraction_run_id = run.id
+            await session.commit()
+
+    asyncio.run(mark())
+    assert (
+        client.post(base + "/confirm", headers=_auth(token), json={}).status_code == 409
+    )
